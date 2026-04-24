@@ -78,6 +78,7 @@ def process_email(
                     name=result.handled_by_name,
                     reason=reject,
                 )
+                error = reject
                 result = None
                 status = "rejected"
             else:
@@ -124,7 +125,7 @@ def process_email(
     return status
 
 
-def _validate(result: ExtractionResult, email: Email) -> str | None:
+def validate_extraction(result: ExtractionResult, email: Email) -> str | None:
     """Cross-extractor sanity checks before we commit to writing the event.
 
     Returns None if the extraction looks trustworthy, or a short reason
@@ -159,6 +160,10 @@ def _validate(result: ExtractionResult, email: Email) -> str | None:
             return "missing_commitment_evidence"
 
     return None
+
+
+# Back-compat alias; prefer validate_extraction in new code.
+_validate = validate_extraction
 
 
 def _already_processed(conn: sqlite3.Connection, message_id: str) -> bool:

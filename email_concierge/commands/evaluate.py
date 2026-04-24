@@ -33,6 +33,7 @@ from email_concierge.extractors.llm import LlmExtractor
 from email_concierge.extractors.ner import NerEventExtractor
 from email_concierge.log import get_logger
 from email_concierge.models import Email
+from email_concierge.pipeline import validate_extraction
 
 log = get_logger(__name__)
 
@@ -175,6 +176,11 @@ def _run_all(
         if result is None:
             out.append({"name": ext.name, "stage": ext.stage, "result": None})
         else:
+            # Run the same validator the live pipeline applies. Without
+            # this, evaluate reports spurious disagreements for past
+            # receipts / missing-commitment cases that production would
+            # have silently rejected anyway.
+            reject = validate_extraction(result, email)
             out.append(
                 {
                     "name": ext.name,
@@ -185,6 +191,7 @@ def _run_all(
                         "location": result.parsed.location,
                         "confidence": result.confidence,
                     },
+                    "rejected_reason": reject,
                 }
             )
     return out
@@ -193,20 +200,34 @@ def _run_all(
 def _disagreement_summary(outcomes: list[dict[str, Any]]) -> str | None:
     """Return a short description if extractors disagree, else None.
 
-    We flag two things: (a) at least one produced a result and one did
-    not, or (b) all produced results but titles differ materially.
+    We flag two things: (a) at least one produced a validator-accepted
+    result and one did not, or (b) all validator-accepted results agree
+    on title but one differs materially.
+
+    Validator-rejected results count as "no result" here — production
+    would drop them anyway, so surfacing them as disagreements creates
+    false noise.
     """
-    produced = [o for o in outcomes if o.get("result")]
+    accepted = [
+        o for o in outcomes
+        if o.get("result") and o.get("rejected_reason") is None
+    ]
     nulls = [o for o in outcomes if "result" in o and o["result"] is None]
-    if produced and nulls:
-        return (
-            f"{len(produced)} extracted / {len(nulls)} returned None "
-            f"(produced: {[p['name'] for p in produced]})"
-        )
-    if len(produced) >= 2:
-        titles = {p["result"]["title"].strip().lower() for p in produced}
+    rejected = [o for o in outcomes if o.get("rejected_reason")]
+    dropped = nulls + rejected
+    if accepted and dropped:
+        parts = [
+            f"{len(accepted)} extracted / {len(dropped)} dropped",
+            f"produced: {[p['name'] for p in accepted]}",
+        ]
+        if rejected:
+            reasons = sorted({r['rejected_reason'].split(' ', 1)[0] for r in rejected})
+            parts.append(f"validator dropped: {reasons}")
+        return " ".join(parts)
+    if len(accepted) >= 2:
+        titles = {p["result"]["title"].strip().lower() for p in accepted}
         if len(titles) > 1:
-            return f"title mismatch across {[p['name'] for p in produced]}: {sorted(titles)}"
+            return f"title mismatch across {[p['name'] for p in accepted]}: {sorted(titles)}"
     return None
 
 

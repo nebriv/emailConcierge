@@ -121,6 +121,47 @@ def main(argv: list[str] | None = None) -> int:
         help="Report what would change without writing to the DB.",
     )
 
+    wt = sub.add_parser(
+        "watch",
+        help=(
+            "Tail recent pipeline activity from the local DB: one compact "
+            "line per processed message, with per-status/stage filters "
+            "and an optional summary mode."
+        ),
+    )
+    wt.add_argument(
+        "--since",
+        default="15m",
+        help="Time window: '15m', '2h', '1d', or ISO-8601 (default: 15m).",
+    )
+    wt.add_argument(
+        "--status",
+        default=None,
+        help="Filter by status (processed, rejected, no_extraction, failed, ...).",
+    )
+    wt.add_argument(
+        "--stage",
+        type=int,
+        default=None,
+        help="Filter by handled_by_stage (1-4).",
+    )
+    wt.add_argument(
+        "--follow",
+        action="store_true",
+        help="After the snapshot, poll for new rows every --interval seconds.",
+    )
+    wt.add_argument(
+        "--interval",
+        type=float,
+        default=5.0,
+        help="Poll interval in seconds when --follow is set (default: 5).",
+    )
+    wt.add_argument(
+        "--summary",
+        action="store_true",
+        help="Print counts-by-status instead of per-row tail.",
+    )
+
     sub.add_parser("metrics", help="(not implemented in this phase)")
     sub.add_parser("export-fixtures", help="(not implemented in this phase)")
 
@@ -215,6 +256,18 @@ def main(argv: list[str] | None = None) -> int:
             label=args.label,
             reason=args.reason,
             dry_run=args.dry_run,
+        )
+
+    if args.command == "watch":
+        from email_concierge.commands.watch import watch_command
+
+        return watch_command(
+            since=args.since,
+            status=args.status,
+            stage=args.stage,
+            follow=args.follow,
+            interval=args.interval,
+            summary=args.summary,
         )
 
     not_yet = {"metrics", "export-fixtures"}

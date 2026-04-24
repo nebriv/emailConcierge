@@ -25,6 +25,12 @@ MAX_BODY_CHARS = 8000
 # schema. Skip the call entirely and let the router fall through.
 MIN_BODY_CHARS = 80
 
+# Hard cap on LLM completion tokens. The extraction schema is small (~8
+# fields, datetimes are ~25 chars, title/location short). 600 tokens is
+# ~2400 chars of JSON — comfortably above any legitimate extraction and
+# tight enough to fail loudly rather than silently truncating mid-field.
+LLM_MAX_TOKENS = 600
+
 
 class _LlmEventSchema(BaseModel):
     is_event: bool
@@ -102,6 +108,7 @@ class LlmExtractor:
                     {"role": "user", "content": prompt},
                 ],
                 response_format={"type": "json_object"},
+                max_tokens=LLM_MAX_TOKENS,
                 timeout=self._timeout,
             )
         except Exception:
@@ -115,10 +122,13 @@ class LlmExtractor:
             log.warning("llm_empty_response", model=self._model)
             return None
 
-        try:
-            payload = json.loads(content)
-        except json.JSONDecodeError:
-            log.warning("llm_invalid_json", content_preview=content[:200])
+        payload = _parse_json_lenient(content)
+        if payload is None:
+            log.warning(
+                "llm_invalid_json",
+                content_preview=content[:200],
+                content_len=len(content),
+            )
             return None
 
         try:
@@ -196,6 +206,74 @@ def _response_content(resp: Any) -> str | None:
         return resp.choices[0].message.content
     except (AttributeError, IndexError, TypeError):
         return None
+
+
+def _parse_json_lenient(content: str) -> dict | None:
+    """Parse a JSON object from LLM output, tolerating common noise.
+
+    Real-world failure modes we've observed against locally-hosted
+    llama.cpp / RunPod backends:
+      - Trailing prose after the closing brace ("... Note: I extracted ...")
+      - Markdown code fences around the JSON ('```json\\n{...}\\n```')
+      - Leading commentary before the opening brace.
+
+    Strict json.loads() fails on all of these even when the actual
+    object is well-formed. We find the first top-level {...} substring
+    and parse only that. Duplicate keys are silently accepted by
+    stdlib json (last value wins) so we don't need to handle them.
+
+    If the JSON is genuinely malformed — mid-string truncation, missing
+    brace from a token-cap hit — this returns None and the caller logs.
+    """
+    if not content:
+        return None
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        pass
+
+    snippet = _extract_first_json_object(content)
+    if snippet is None:
+        return None
+    try:
+        return json.loads(snippet)
+    except json.JSONDecodeError:
+        return None
+
+
+def _extract_first_json_object(content: str) -> str | None:
+    """Return the first balanced {...} substring, or None.
+
+    Tracks string quoting so that braces inside string literals don't
+    throw off the depth counter. Escape-aware.
+    """
+    start = content.find("{")
+    if start == -1:
+        return None
+
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(content)):
+        ch = content[i]
+        if escape:
+            escape = False
+            continue
+        if ch == "\\" and in_string:
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return content[start : i + 1]
+    return None
 
 
 def _clean_evidence(value: str | None) -> str | None:

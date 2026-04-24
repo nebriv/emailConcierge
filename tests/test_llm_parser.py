@@ -115,3 +115,91 @@ def test_llm_skips_call_when_body_too_short(make_email):
     assert result is None
     # Confirm the short-circuit fired before the HTTP layer was touched.
     ext._client.chat.completions.create.assert_not_called()
+
+
+def test_llm_recovers_json_wrapped_in_code_fence(make_email):
+    """Some backends ignore the 'no code fences' instruction. Recover."""
+    payload = {
+        "is_event": True,
+        "confidence": 0.9,
+        "title": "Brunch",
+        "start": "2050-07-04T11:00:00-04:00",
+        "commitment_evidence": "Confirmation #ABC123",
+    }
+    content = f"```json\n{json.dumps(payload)}\n```"
+    ext = _build_extractor_with_fake(content)
+    result = ext.extract(make_email(body_text=_SAMPLE_BODY))
+    assert result is not None
+    assert result.parsed.title == "Brunch"
+
+
+def test_llm_recovers_json_with_trailing_prose(make_email):
+    """llama.cpp-class models often append 'Note: ...' after the object."""
+    payload = {
+        "is_event": True,
+        "confidence": 0.9,
+        "title": "Brunch",
+        "start": "2050-07-04T11:00:00-04:00",
+        "commitment_evidence": "Confirmation #ABC123",
+    }
+    content = json.dumps(payload) + "\n\nNote: I extracted the reservation time from the body."
+    ext = _build_extractor_with_fake(content)
+    result = ext.extract(make_email(body_text=_SAMPLE_BODY))
+    assert result is not None
+    assert result.parsed.title == "Brunch"
+
+
+def test_llm_recovers_json_with_leading_prose(make_email):
+    payload = {
+        "is_event": True,
+        "confidence": 0.9,
+        "title": "Brunch",
+        "start": "2050-07-04T11:00:00-04:00",
+        "commitment_evidence": "Confirmation #ABC123",
+    }
+    content = "Here is the extracted event:\n\n" + json.dumps(payload)
+    ext = _build_extractor_with_fake(content)
+    result = ext.extract(make_email(body_text=_SAMPLE_BODY))
+    assert result is not None
+
+
+def test_llm_lenient_parser_respects_braces_inside_strings(make_email):
+    """A { in a string literal must not inflate the depth counter."""
+    payload = {
+        "is_event": True,
+        "confidence": 0.9,
+        "title": "Dinner {reservation}",  # literal braces in title
+        "start": "2050-07-04T19:30:00-04:00",
+        "commitment_evidence": "Order #X1Y2",
+    }
+    content = "preamble " + json.dumps(payload) + " postamble"
+    ext = _build_extractor_with_fake(content)
+    result = ext.extract(make_email(body_text=_SAMPLE_BODY))
+    assert result is not None
+    assert result.parsed.title == "Dinner {reservation}"
+
+
+def test_llm_returns_none_when_truncated_mid_object(make_email):
+    """If max_tokens caps the output mid-object (no closing brace ever
+    appears), we should fail rather than recover garbage."""
+    payload = {
+        "is_event": True,
+        "confidence": 0.9,
+        "title": "x",
+        "start": "2050-07-04T19:30:00-04:00",
+    }
+    truncated = json.dumps(payload)[:-5]  # chop closing brace + tail
+    ext = _build_extractor_with_fake(truncated)
+    assert ext.extract(make_email(body_text=_SAMPLE_BODY)) is None
+
+
+def test_llm_sets_max_tokens_on_call(make_email):
+    """Explicit max_tokens is the guard that makes truncation a failure
+    mode we can see, rather than runaway output that times out."""
+    payload = {
+        "is_event": False, "confidence": 0.5, "title": None, "start": None,
+    }
+    ext = _build_extractor_with_fake(json.dumps(payload))
+    ext.extract(make_email(body_text=_SAMPLE_BODY))
+    call_kwargs = ext._client.chat.completions.create.call_args.kwargs
+    assert call_kwargs["max_tokens"] == 600
