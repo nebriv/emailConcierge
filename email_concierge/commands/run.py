@@ -6,6 +6,7 @@ from email_concierge.extractors.base import Extractor
 from email_concierge.extractors.discovery import discover_plugins
 from email_concierge.extractors.ics import IcsExtractor
 from email_concierge.extractors.llm import LlmExtractor
+from email_concierge.extractors.ner import NerEventExtractor
 from email_concierge.log import get_logger
 from email_concierge.sinks.caldav_sink import CaldavSink
 
@@ -26,7 +27,12 @@ def run_command() -> int:
 
     plugins = discover_plugins()
     log.info("plugins_loaded", names=[p.name for p in plugins])
-    extractors: list[Extractor] = [IcsExtractor(), *plugins, LlmExtractor()]
+    extractors: list[Extractor] = [
+        IcsExtractor(),
+        *plugins,
+        NerEventExtractor(),  # stage 3 — no-op if ml extras missing
+        LlmExtractor(),
+    ]
     sink = CaldavSink(conn)
 
     try:

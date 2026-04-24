@@ -61,6 +61,44 @@ with their source Gmail messages to produce pre-labeled `(email, event)`
 rows. See [`docs/google-training-import.md`](docs/google-training-import.md)
 for OAuth setup.
 
+## LLM backends
+
+Stage 4 uses any OpenAI-compatible chat-completions endpoint — only
+`base_url`, `api_key`, and `model` change between providers.
+
+| Backend | `LLM_BASE_URL` | Notes |
+|---|---|---|
+| Ollama (local) | `http://ollama:11434/v1` | Default. No cost, needs a GPU/CPU big enough for the model you pick. |
+| RunPod serverless vLLM | `https://api.runpod.ai/v2/<ENDPOINT_ID>/openai/v1` | Pay-per-second, scales to zero. See below. |
+| OpenRouter | `https://openrouter.ai/api/v1` | Frontier models. |
+| Anthropic via proxy | via any OpenAI-compat gateway | No Anthropic-native SDK dependency. |
+
+### RunPod serverless vLLM
+
+Useful when you don't want a GPU in the box that runs this service. Deploy
+a vLLM worker from the RunPod console; in the endpoint's env-var panel set:
+
+- `MODEL_NAME=qwen/qwen3-8b` (or any instruct-tuned chat model)
+- `RAW_OPENAI_OUTPUT=true` (**required** — surfaces the `/openai/v1/*`
+  proxy paths so existing OpenAI SDK clients work unchanged)
+- `OPENAI_RESPONSE_ROLE=assistant`
+- `ENABLE_AUTO_TOOL_CHOICE=false`
+
+Then set in `.env`:
+
+```bash
+EMAIL_CONCIERGE_LLM_BASE_URL=https://api.runpod.ai/v2/<ENDPOINT_ID>/openai/v1
+EMAIL_CONCIERGE_LLM_API_KEY=<runpod-api-key>
+EMAIL_CONCIERGE_LLM_MODEL=qwen/qwen3-8b
+EMAIL_CONCIERGE_LLM_TIMEOUT_SECONDS=180  # first-request cold start
+```
+
+vLLM's guided-decoding backend honors `response_format={"type":"json_object"}`,
+so `LlmExtractor` works unchanged; no RunPod-specific code path.
+
+FlashBoot keeps warm checkpoints around — after the first request, cold
+starts are typically ~2s.
+
 ## Development
 
 ```bash

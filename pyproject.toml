@@ -40,6 +40,16 @@ plid-resolver = [
     "selenium>=4.10",
     "undetected-chromedriver>=3.5",
 ]
+ml = [
+    # Stage 3: classifier gate + zero-shot NER. Pulls in torch transitively
+    # (~1GB on disk); users who only want Stage 1 (ICS) + Stage 4 (LLM)
+    # can skip this extras group. Stage 3 gracefully degrades to disabled
+    # when the imports fail — see extractors/ner.py.
+    "sentence-transformers>=3.0",
+    "scikit-learn>=1.4",
+    "gliner>=0.2",
+    "numpy>=1.26",
+]
 
 [project.scripts]
 email-concierge = "email_concierge.__main__:main"

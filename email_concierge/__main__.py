@@ -49,8 +49,37 @@ def main(argv: list[str] | None = None) -> int:
         help="Write extracted events to CalDAV (off by default — training rows only)",
     )
 
-    sub.add_parser("train", help="(not implemented in this phase)")
-    sub.add_parser("evaluate", help="(not implemented in this phase)")
+    tr = sub.add_parser("train", help="Fit the Stage 3 event classifier from training_examples")
+    tr.add_argument(
+        "kind",
+        nargs="?",
+        default="classifier",
+        choices=["classifier"],
+        help="What to train (only 'classifier' supported today)",
+    )
+    tr.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Compute cross-validation metrics but don't persist the model",
+    )
+
+    ev = sub.add_parser(
+        "evaluate",
+        help="Replay recent training rows through all extractors and log disagreements",
+    )
+    ev.add_argument("--sample", type=int, default=100, help="Number of rows to sample")
+    ev.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="RNG seed for reproducible samples (default: random)",
+    )
+    ev.add_argument(
+        "--require-plugin",
+        default=None,
+        help="Only sample rows previously handled by this extractor name",
+    )
+
     sub.add_parser("metrics", help="(not implemented in this phase)")
     sub.add_parser("export-fixtures", help="(not implemented in this phase)")
 
@@ -118,7 +147,21 @@ def main(argv: list[str] | None = None) -> int:
             write_to_caldav=args.write_to_caldav,
         )
 
-    not_yet = {"train", "evaluate", "metrics", "export-fixtures"}
+    if args.command == "train":
+        from email_concierge.commands.train import train_command
+
+        return train_command(kind=args.kind, dry_run=args.dry_run)
+
+    if args.command == "evaluate":
+        from email_concierge.commands.evaluate import evaluate_command
+
+        return evaluate_command(
+            sample=args.sample,
+            seed=args.seed,
+            require_plugin=args.require_plugin,
+        )
+
+    not_yet = {"metrics", "export-fixtures"}
     if args.command in not_yet:
         print(f"'{args.command}' is not implemented in this phase.", file=sys.stderr)
         return 2
