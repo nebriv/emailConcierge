@@ -226,7 +226,7 @@ def test_sink_exception_marks_failed(
     tmp_db, make_email, make_result, stub_extractor
 ):
     class ExplodingSink:
-        def write(self, result, message_id):
+        def write(self, result, email, *, account=None):
             raise RuntimeError("caldav down")
 
     email = make_email(message_id="<err@x>")
@@ -255,8 +255,8 @@ def test_sink_inserting_into_calendar_events_does_not_hit_fk_violation(
         def __init__(self, conn):
             self._conn = conn
 
-        def write(self, result, message_id):
-            uid = result.parsed.ical_uid or f"uid-{message_id}"
+        def write(self, result, email, *, account=None):
+            uid = result.parsed.ical_uid or f"uid-{email.message_id}"
             now = datetime.now(tz=UTC).isoformat()
             self._conn.execute(
                 """
@@ -265,7 +265,7 @@ def test_sink_inserting_into_calendar_events_does_not_hit_fk_violation(
                    created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (uid, message_id, "http://fake", result.parsed.title,
+                (uid, email.message_id, "http://fake", result.parsed.title,
                  result.parsed.start.isoformat(), now, now),
             )
             return uid

@@ -84,7 +84,7 @@ def main() -> int:
         conn.row_factory = sqlite3.Row
         db.init_schema(conn)
         sink = CaldavSink(conn)
-        sink.write(result, email.message_id)
+        sink.write(result, email)
         print("[replay] written to CalDAV", file=sys.stderr)
     return 0
 

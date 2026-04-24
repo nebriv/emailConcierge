@@ -9,7 +9,7 @@ from icalendar import Calendar, Event
 
 from email_concierge.config import settings
 from email_concierge.log import get_logger
-from email_concierge.models import ExtractionResult
+from email_concierge.models import Email, ExtractionResult
 
 log = get_logger(__name__)
 
@@ -43,10 +43,17 @@ class CaldavSink:
             log.error("caldav_calendar_not_found", name=self._cfg.caldav_calendar)
             raise
 
-    def write(self, result: ExtractionResult, message_id: str) -> str:
+    def write(
+        self,
+        result: ExtractionResult,
+        email: Email,
+        *,
+        account: str | None = None,
+    ) -> str:
         """Write the event and record it in calendar_events. Returns the iCal UID used."""
+        message_id = email.message_id
         uid = result.parsed.ical_uid or _deterministic_uid(message_id)
-        ical_bytes = _build_vcalendar(result, uid)
+        ical_bytes = _build_vcalendar(result, uid, email=email, account=account)
 
         if self._cfg.dry_run:
             log.info(
@@ -110,7 +117,13 @@ def _deterministic_uid(message_id: str) -> str:
     return f"{digest}@email-concierge"
 
 
-def _build_vcalendar(result: ExtractionResult, uid: str) -> bytes:
+def _build_vcalendar(
+    result: ExtractionResult,
+    uid: str,
+    *,
+    email: Email | None = None,
+    account: str | None = None,
+) -> bytes:
     cal = Calendar()
     cal.add("prodid", "-//email-concierge//EN")
     cal.add("version", "2.0")
@@ -124,8 +137,9 @@ def _build_vcalendar(result: ExtractionResult, uid: str) -> bytes:
         event.add("dtend", result.parsed.end)
     if result.parsed.location:
         event.add("location", result.parsed.location)
-    if result.parsed.description:
-        event.add("description", result.parsed.description)
+    description = _compose_description(result, email, account)
+    if description:
+        event.add("description", description)
     # Tag the event so users can tell what wrote it.
     event.add(
         "x-email-concierge-source",
@@ -135,6 +149,34 @@ def _build_vcalendar(result: ExtractionResult, uid: str) -> bytes:
 
     cal.add_component(event)
     return cal.to_ical()
+
+
+def _compose_description(
+    result: ExtractionResult,
+    email: Email | None,
+    account: str | None,
+) -> str:
+    """Combine the extractor's description with a provenance footer so the
+    user can tell, from the calendar UI alone, which email produced the
+    event and which extractor decided it was one — the signal needed to
+    spot false positives and tweak SENDER_DENY."""
+    base = (result.parsed.description or "").rstrip()
+    if email is None:
+        return base
+    lines = [
+        "────────",
+        f"Source:     {email.sender}",
+        f"Subject:    {email.subject}",
+    ]
+    if account:
+        lines.append(f"Account:    {account}")
+    lines.append(
+        f"Extractor:  {result.handled_by_name} (stage {result.handled_by_stage}) "
+        f"· confidence {result.confidence:.2f}"
+    )
+    lines.append(f"Message-ID: {email.message_id}")
+    footer = "\n".join(lines)
+    return f"{base}\n\n{footer}" if base else footer
 
 
 def _find_by_uid(calendar, uid: str):

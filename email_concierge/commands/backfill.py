@@ -33,13 +33,14 @@ class _NullSink:
     """Drop-in Sink used when --no-write is set. Records nothing, logs
     the would-be UID so backfill runs can be dry without touching CalDAV."""
 
-    def write(self, result, message_id: str) -> str:  # type: ignore[no-untyped-def]
-        uid = result.parsed.ical_uid or f"backfill-{message_id}"
+    def write(self, result, email, *, account=None) -> str:  # type: ignore[no-untyped-def]
+        uid = result.parsed.ical_uid or f"backfill-{email.message_id}"
         log.info(
             "backfill_would_write",
             uid=uid,
             title=result.parsed.title,
-            message_id=message_id,
+            message_id=email.message_id,
+            account=account,
         )
         return uid
 

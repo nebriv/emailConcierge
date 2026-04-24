@@ -18,7 +18,13 @@ BODY_PREVIEW_LEN = 500
 
 
 class Sink(Protocol):
-    def write(self, result: ExtractionResult, message_id: str) -> str: ...
+    def write(
+        self,
+        result: ExtractionResult,
+        email: Email,
+        *,
+        account: str | None = None,
+    ) -> str: ...
 
 
 def process_email(
@@ -100,7 +106,7 @@ def process_email(
                     error=None,
                     account=account,
                 )
-                sink.write(result, email.message_id)
+                sink.write(result, email, account=account)
                 status = "processed"
     except Exception as e:
         log.exception(

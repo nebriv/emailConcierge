@@ -100,11 +100,17 @@ class StubExtractor:
 
 class RecordingSink:
     def __init__(self) -> None:
-        self.writes: list[tuple[ExtractionResult, str]] = []
+        self.writes: list[tuple[ExtractionResult, Email, str | None]] = []
 
-    def write(self, result: ExtractionResult, message_id: str) -> str:
-        self.writes.append((result, message_id))
-        return result.parsed.ical_uid or f"stub-uid:{message_id}"
+    def write(
+        self,
+        result: ExtractionResult,
+        email: Email,
+        *,
+        account: str | None = None,
+    ) -> str:
+        self.writes.append((result, email, account))
+        return result.parsed.ical_uid or f"stub-uid:{email.message_id}"
 
 
 @pytest.fixture

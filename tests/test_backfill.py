@@ -136,16 +136,18 @@ def test_since_criteria_formats_imap_date_and_widens_by_one_day():
     assert _since_criteria(since) == "SINCE 14-Jun-2025"
 
 
-def test_null_sink_logs_and_returns_uid(make_result):
+def test_null_sink_logs_and_returns_uid(make_result, make_email):
     sink = _NullSink()
     result = make_result(stage=1, name="ics", ical_uid="explicit-uid")
-    assert sink.write(result, "<msg-1@x>") == "explicit-uid"
+    email = make_email(message_id="<msg-1@x>")
+    assert sink.write(result, email) == "explicit-uid"
 
 
-def test_null_sink_generates_uid_when_result_has_none(make_result):
+def test_null_sink_generates_uid_when_result_has_none(make_result, make_email):
     sink = _NullSink()
     result = make_result(stage=1, ical_uid=None)
-    assert sink.write(result, "<msg-2@x>") == "backfill-<msg-2@x>"
+    email = make_email(message_id="<msg-2@x>")
+    assert sink.write(result, email) == "backfill-<msg-2@x>"
 
 
 def test_backfill_processes_emails_and_records_training_rows(
@@ -310,10 +312,10 @@ def test_backfill_with_caldav_update_by_uid(
         def __init__(self, conn) -> None:
             self.by_uid: dict[str, str] = {}
 
-        def write(self, result, message_id: str) -> str:
-            uid = result.parsed.ical_uid or f"gen-{message_id}"
+        def write(self, result, email, *, account=None) -> str:
+            uid = result.parsed.ical_uid or f"gen-{email.message_id}"
             self.by_uid[uid] = result.parsed.title  # overwrites on re-UID
-            written.append((uid, message_id))
+            written.append((uid, email.message_id))
             return uid
 
     holder: dict[str, FakeCaldavSink] = {}
