@@ -161,6 +161,59 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Print counts-by-status instead of per-row tail.",
     )
+    wt.add_argument(
+        "--ids",
+        action="store_true",
+        dest="show_ids",
+        help="Append the full Message-ID to each row (for mark-event/forget/label).",
+    )
+
+    me = sub.add_parser(
+        "mark-event",
+        help=(
+            "Shorthand for `label --label=event`: flip a training_examples "
+            "row to label='event'/label_source='manual'. Use when the "
+            "pipeline missed an email that really was an event (false "
+            "negative) so the next classifier train absorbs the fix."
+        ),
+    )
+    me.add_argument(
+        "message_ids",
+        nargs="+",
+        metavar="MESSAGE_ID",
+        help="One or more Message-IDs to mark as positive training examples.",
+    )
+    me.add_argument(
+        "--reason",
+        default=None,
+        help="Free-text note, logged for audit (not persisted to the row).",
+    )
+    me.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report what would change without writing to the DB.",
+    )
+
+    fg = sub.add_parser(
+        "forget",
+        help=(
+            "Drop a calendar_events row so the feedback scan won't flip "
+            "its training label when the event disappears from CalDAV. "
+            "Use when you want to delete an event without it counting as "
+            "a negative training signal."
+        ),
+    )
+    fg.add_argument("uid", help="iCal UID of the event to forget")
+    fg.add_argument(
+        "--delete-remote",
+        action="store_true",
+        help="Also delete the event from CalDAV (default: local row only)",
+    )
+    fg.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report what would happen without writing anything",
+    )
 
     sub.add_parser("metrics", help="(not implemented in this phase)")
     sub.add_parser("export-fixtures", help="(not implemented in this phase)")
@@ -268,6 +321,26 @@ def main(argv: list[str] | None = None) -> int:
             follow=args.follow,
             interval=args.interval,
             summary=args.summary,
+            show_ids=args.show_ids,
+        )
+
+    if args.command == "mark-event":
+        from email_concierge.commands.label import label_command
+
+        return label_command(
+            message_ids=args.message_ids,
+            label="event",
+            reason=args.reason,
+            dry_run=args.dry_run,
+        )
+
+    if args.command == "forget":
+        from email_concierge.commands.forget import forget_command
+
+        return forget_command(
+            uid=args.uid,
+            delete_remote=args.delete_remote,
+            dry_run=args.dry_run,
         )
 
     not_yet = {"metrics", "export-fixtures"}

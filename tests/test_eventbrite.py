@@ -14,7 +14,12 @@ from email_concierge.extractors.plugins.eventbrite import EventbriteExtractor
 from email_concierge.models import Email
 
 
-def _email(subject: str, body_html: str, *, sender: str = "Eventbrite <noreply@order.eventbrite.com>") -> Email:
+def _email(
+    subject: str,
+    body_html: str,
+    *,
+    sender: str = "Eventbrite <noreply@order.eventbrite.com>",
+) -> Email:
     return Email(
         message_id="eventbrite-test@local",
         sender=sender,

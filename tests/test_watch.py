@@ -210,3 +210,28 @@ def test_watch_empty_window_prints_nothing(tmp_db):
 def test_watch_summary_empty_window_reports_zero(tmp_db):
     out = _run(tmp_db, since="5m", summary=True)
     assert "total=0" in out
+
+
+def test_watch_show_ids_appends_message_id(tmp_db):
+    """--ids surfaces the Message-ID so operators can paste it into
+    `mark-event` / `forget` / `label` without guessing at truncation."""
+    now = datetime.now(tz=UTC)
+    _seed(
+        tmp_db, message_id="<CAF=abc123@mail.example.com>", status="no_extraction",
+        sender="bookings@vendor.com", subject="Your trip",
+        processed_at=now - timedelta(minutes=1),
+    )
+    out_ids = _run(tmp_db, since="15m", show_ids=True)
+    assert "id=<CAF=abc123@mail.example.com>" in out_ids
+
+
+def test_watch_default_output_omits_message_id(tmp_db):
+    """Without --ids the Message-ID stays out of the tail line."""
+    now = datetime.now(tz=UTC)
+    _seed(
+        tmp_db, message_id="<CAF=abc123@mail.example.com>", status="no_extraction",
+        sender="bookings@vendor.com", subject="Your trip",
+        processed_at=now - timedelta(minutes=1),
+    )
+    out = _run(tmp_db, since="15m")
+    assert "<CAF=abc123@mail.example.com>" not in out

@@ -49,6 +49,7 @@ def watch_command(
     follow: bool = False,
     interval: float = 5.0,
     summary: bool = False,
+    show_ids: bool = False,
     output: TextIO | None = None,
 ) -> int:
     """Print recent pipeline activity. Returns 0 on clean exit."""
@@ -78,7 +79,7 @@ def watch_command(
             return 0
 
         last_seen = _print_rows(
-            conn, cutoff, status=status, stage=stage, out=out,
+            conn, cutoff, status=status, stage=stage, out=out, show_ids=show_ids,
         )
         if not follow:
             return 0
@@ -86,7 +87,7 @@ def watch_command(
         while True:
             time.sleep(interval)
             last_seen = _print_rows(
-                conn, last_seen, status=status, stage=stage, out=out,
+                conn, last_seen, status=status, stage=stage, out=out, show_ids=show_ids,
             )
     except KeyboardInterrupt:
         return 0
@@ -130,6 +131,7 @@ def _print_rows(
     status: str | None,
     stage: int | None,
     out: TextIO,
+    show_ids: bool = False,
 ) -> datetime:
     """Fetch rows with processed_at > cutoff, print them, return the new cutoff.
 
@@ -141,7 +143,7 @@ def _print_rows(
     if not rows:
         return cutoff
     for row in rows:
-        out.write(_format_row(row) + "\n")
+        out.write(_format_row(row, show_id=show_ids) + "\n")
     out.flush()
     # `processed_at` is ISO-8601 UTC — comparable as-is.
     new_cutoff = max(_parse_ts(r["processed_at"]) for r in rows)
@@ -215,7 +217,7 @@ def _print_summary(
     out.flush()
 
 
-def _format_row(row: sqlite3.Row) -> str:
+def _format_row(row: sqlite3.Row, *, show_id: bool = False) -> str:
     ts = _parse_ts(row["processed_at"]).astimezone().strftime("%H:%M:%S")
     label = _STATUS_LABEL.get(row["status"], row["status"][:4].upper())
     stage = row["handled_by_stage"]
@@ -226,6 +228,10 @@ def _format_row(row: sqlite3.Row) -> str:
     sender = _truncate(row["sender"] or "", 28)
     subject = _truncate(row["subject"] or "", 50)
     line = f"{ts} {label} {stage_str} {name:18s} {conf_str:4s} {sender:28s} {subject}"
+    if show_id:
+        # Unwrapped — full Message-ID, so operators can copy-paste into
+        # `mark-event` / `forget` / `label` without guessing at truncation.
+        line += f"  id={row['message_id']}"
     # For rejected rows, surface the reason on the same line.
     if row["status"] == "rejected" and row["error"]:
         line += f"  [{row['error']}]"
