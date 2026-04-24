@@ -87,6 +87,11 @@ class GoogleCalendarSource:
                 "maxResults": page_size,
                 "singleEvents": True,
                 "showDeleted": False,
+                # Chronological order so the log reads oldest-first. The
+                # default ("unspecified, stable") mixes eras, which makes
+                # a --since flag feel like it's skipping old events when
+                # really they're on later pages.
+                "orderBy": "startTime",
             }
             if since is not None:
                 request_kwargs["timeMin"] = since.isoformat()

@@ -20,7 +20,35 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("run", help="Start the live IMAP listener")
-    sub.add_parser("backfill", help="(not implemented in this phase)")
+
+    bf = sub.add_parser(
+        "backfill",
+        help="Run the full pipeline over a historical IMAP folder (read-only)",
+    )
+    bf.add_argument(
+        "--folder",
+        required=True,
+        help="IMAP folder to scan (e.g. INBOX, Archive)",
+    )
+    bf.add_argument(
+        "--since",
+        type=_parse_date,
+        default=None,
+        help="Only fetch messages received on-or-after this ISO date (default: 2 years ago)",
+    )
+    bf.add_argument(
+        "--max",
+        type=int,
+        default=None,
+        dest="max_messages",
+        help="Stop after processing N messages (safety valve for huge archives)",
+    )
+    bf.add_argument(
+        "--write-to-caldav",
+        action="store_true",
+        help="Write extracted events to CalDAV (off by default — training rows only)",
+    )
+
     sub.add_parser("train", help="(not implemented in this phase)")
     sub.add_parser("evaluate", help="(not implemented in this phase)")
     sub.add_parser("metrics", help="(not implemented in this phase)")
@@ -80,7 +108,17 @@ def main(argv: list[str] | None = None) -> int:
             resolve_plids=args.resolve_plids,
         )
 
-    not_yet = {"backfill", "train", "evaluate", "metrics", "export-fixtures"}
+    if args.command == "backfill":
+        from email_concierge.commands.backfill import backfill_command
+
+        return backfill_command(
+            folder=args.folder,
+            since=args.since,
+            max_messages=args.max_messages,
+            write_to_caldav=args.write_to_caldav,
+        )
+
+    not_yet = {"train", "evaluate", "metrics", "export-fixtures"}
     if args.command in not_yet:
         print(f"'{args.command}' is not implemented in this phase.", file=sys.stderr)
         return 2

@@ -7,3 +7,6 @@ services:
     env_file: .env
     volumes:
       - ./data:/data
+    # If you run Ollama in a different compose file / on the host, make sure
+    # EMAIL_CONCIERGE_LLM_BASE_URL in .env points to a reachable URL. For
+    # host-mode Ollama on Docker Desktop, `host.docker.internal:11434` works.
