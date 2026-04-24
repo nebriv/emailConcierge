@@ -104,7 +104,8 @@ def _load_sample(
 ) -> list[sqlite3.Row]:
     sql = """
         SELECT te.message_id, te.sender, te.subject, te.body_preview,
-               te.extracted_json, te.created_at, pm.handled_by_name
+               te.extracted_json, te.created_at,
+               pm.handled_by_name, pm.received_at
           FROM training_examples te
           LEFT JOIN processed_messages pm ON pm.message_id = te.message_id
          WHERE te.body_preview IS NOT NULL
@@ -126,13 +127,31 @@ def _row_to_email(row: sqlite3.Row) -> Email:
     # for re-running classifier + NER + LLM; it would not be enough to replay
     # the ICS parser, since attachments aren't persisted here — those stay
     # `no_extraction` which the agreement check handles the same as any miss.
+    #
+    # received_at matters: plugins (Airbnb, etc.) use it as the anchor for
+    # year inference on year-less date strings. Falling back to now() made
+    # historical emails look like future-dated plans and bumped inferred
+    # years forward by one.
+    received_at = _parse_received_at(row["received_at"]) or datetime.now(tz=UTC)
     return Email(
         message_id=row["message_id"],
         sender=row["sender"] or "",
         subject=row["subject"] or "",
         body_text=row["body_preview"] or "",
-        received_at=datetime.now(tz=UTC),  # preview has no timestamp field
+        received_at=received_at,
     )
+
+
+def _parse_received_at(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt
 
 
 def _run_all(
