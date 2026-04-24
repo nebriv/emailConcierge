@@ -17,9 +17,23 @@ def _parse_date(s: str) -> datetime:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="email_concierge")
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command", required=False)
 
-    sub.add_parser("run", help="Start the live IMAP listener")
+    sh = sub.add_parser(
+        "shell",
+        help=(
+            "Interactive REPL with the listener running as a background "
+            "thread. Default when no subcommand is given. Falls back to "
+            "foreground listener when stdin is not a TTY."
+        ),
+    )
+    sh.add_argument(
+        "--no-listener",
+        action="store_true",
+        help="Drop into the REPL without starting the listener thread",
+    )
+
+    sub.add_parser("run", help="Start the live IMAP listener (foreground, no REPL)")
 
     bf = sub.add_parser(
         "backfill",
@@ -256,6 +270,15 @@ def main(argv: list[str] | None = None) -> int:
 
     cfg = settings()
     logmod.configure(level=cfg.log_level, json_output=cfg.log_json)
+
+    # No subcommand → drop into the interactive shell. This is what the
+    # Dockerfile's CMD relies on; locally `python -m email_concierge`
+    # gets you the REPL too.
+    if args.command is None or args.command == "shell":
+        from email_concierge.commands.shell import shell_command
+
+        start_listener = not getattr(args, "no_listener", False)
+        return shell_command(start_listener=start_listener)
 
     if args.command == "run":
         from email_concierge.commands.run import run_command

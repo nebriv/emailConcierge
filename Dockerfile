@@ -42,8 +42,10 @@ ENV EMAIL_CONCIERGE_DB_PATH=/data/email-concierge.db \
     EMAIL_CONCIERGE_MODELS_DIR=/data/models \
     EMAIL_CONCIERGE_LOG_JSON=true
 
-# Default is the live listener. Override at `docker run` time or via
-# `docker exec` to invoke other subcommands (watch, label, mark-event,
-# forget, train, evaluate, feedback, backfill, import-training).
+# Default is the interactive shell: REPL + listener as a daemon thread.
+# When stdin isn't a TTY (e.g. `docker compose up -d` without
+# `stdin_open: true`), the shell falls back to foreground-listener,
+# so the container is still useful in a purely detached deployment.
+# Attach with `docker attach email-concierge` to get the prompt.
 ENTRYPOINT ["python", "-m", "email_concierge"]
-CMD ["run"]
+CMD ["shell"]
