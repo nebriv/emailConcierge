@@ -28,6 +28,7 @@ class _LlmEventSchema(BaseModel):
     end: datetime | None = None
     location: str | None = None
     description: str | None = None
+    commitment_evidence: str | None = None
 
     @field_validator("start", "end")
     @classmethod
@@ -134,6 +135,7 @@ class LlmExtractor:
             confidence=float(schema.confidence),
             parsed=parsed,
             latency_ms=latency_ms,
+            commitment_evidence=_clean_evidence(schema.commitment_evidence),
         )
 
 
@@ -180,3 +182,19 @@ def _response_content(resp: Any) -> str | None:
         return resp.choices[0].message.content
     except (AttributeError, IndexError, TypeError):
         return None
+
+
+def _clean_evidence(value: str | None) -> str | None:
+    """Trim and cap the LLM's quoted commitment snippet.
+
+    Upstream validator just checks presence + length, so we normalize here
+    to keep the stored value compact and loggable.
+    """
+    if not value:
+        return None
+    s = _WHITESPACE_RE.sub(" ", value).strip()
+    if not s:
+        return None
+    if len(s) > 200:
+        s = s[:200]
+    return s

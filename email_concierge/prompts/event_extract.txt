@@ -12,7 +12,8 @@ Return STRICT JSON matching exactly this schema:
   "start": ISO-8601 datetime with timezone offset (e.g. "2026-03-14T18:30:00-04:00") or null,
   "end":   ISO-8601 datetime with timezone offset or null,
   "location": string or null,
-  "description": string or null
+  "description": string or null,
+  "commitment_evidence": string or null
 }
 
 Rules:
@@ -21,8 +22,23 @@ Rules:
   or anything without a specific dated event.
 - "is_event": true ONLY when the email represents a confirmed, dated item the
   user is committed to attending. Speculative plans, "save the date"
-  invitations without confirmation, and abandoned cart reminders do NOT
+  invitations without confirmation, abandoned cart reminders, and
+  announcements of events the user has NOT personally signed up for do NOT
   qualify.
+- Reject past-tense receipts and thank-you notes that reference a completed
+  transaction (a meal the user ate, a ride they took, a tour they finished).
+  Those are not future events.
+- Reject mass-mailed event announcements — newsletters from orgs like EFF,
+  meetup groups, or hiking clubs describing an upcoming event — unless the
+  email addresses the recipient personally and names a specific seat, ticket,
+  reservation, or RSVP confirmation for them.
+- "commitment_evidence" MUST quote verbatim a short snippet from the email
+  (under 200 chars) that proves the recipient is personally committed to
+  this specific dated event. Strong evidence includes: order number,
+  confirmation code, reservation number, ticket number, "Your reservation
+  for [Name]", "You're confirmed for...", "Hi [Name], your booking is
+  confirmed". If you cannot find such a snippet, set "is_event": false and
+  "commitment_evidence": null.
 - Timezones are required on datetimes. If only a local time is present and
   the venue/location implies a region, infer the appropriate offset. If you
   cannot confidently determine the offset, set "is_event": false and
