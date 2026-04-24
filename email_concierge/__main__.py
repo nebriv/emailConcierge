@@ -89,6 +89,38 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
 
+    lbl = sub.add_parser(
+        "label",
+        help=(
+            "Manually correct training_examples labels. Used to fix "
+            "auto-labeled false positives that the feedback loop cannot "
+            "see (e.g., rejected extractions that never hit CalDAV)."
+        ),
+    )
+    lbl.add_argument(
+        "--message-id",
+        action="append",
+        dest="message_ids",
+        required=True,
+        help="Message-ID to update. Repeat the flag to update multiple rows.",
+    )
+    lbl.add_argument(
+        "--label",
+        choices=["event", "neither"],
+        required=True,
+        help="New label to assign.",
+    )
+    lbl.add_argument(
+        "--reason",
+        default=None,
+        help="Free-text note, logged for audit (not persisted to the row).",
+    )
+    lbl.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report what would change without writing to the DB.",
+    )
+
     sub.add_parser("metrics", help="(not implemented in this phase)")
     sub.add_parser("export-fixtures", help="(not implemented in this phase)")
 
@@ -174,6 +206,16 @@ def main(argv: list[str] | None = None) -> int:
         from email_concierge.commands.feedback import feedback_command
 
         return feedback_command()
+
+    if args.command == "label":
+        from email_concierge.commands.label import label_command
+
+        return label_command(
+            message_ids=args.message_ids,
+            label=args.label,
+            reason=args.reason,
+            dry_run=args.dry_run,
+        )
 
     not_yet = {"metrics", "export-fixtures"}
     if args.command in not_yet:
