@@ -86,6 +86,7 @@ def test_cache_hit_returns_without_flow(tmp_path: Path) -> None:
     fake_creds = MagicMock()
     fake_creds.valid = True
     fake_creds.expired = False
+    fake_creds.scopes = ALL_SCOPES
 
     with (
         patch(
@@ -119,6 +120,7 @@ def test_refresh_when_expired_with_refresh_token(tmp_path: Path) -> None:
     fake_creds.valid = False
     fake_creds.expired = True
     fake_creds.refresh_token = "refresh-token-abc"
+    fake_creds.scopes = ALL_SCOPES
     fake_creds.to_json.return_value = _fake_token_json(ALL_SCOPES, expired=False)
 
     with (
@@ -226,6 +228,7 @@ def test_invalid_cached_token_falls_through_to_flow(tmp_path: Path) -> None:
     bad_creds.valid = False
     bad_creds.expired = True
     bad_creds.refresh_token = None
+    bad_creds.scopes = ALL_SCOPES
 
     fresh_creds = MagicMock()
     fresh_creds.to_json.return_value = _fake_token_json(ALL_SCOPES)
@@ -249,6 +252,44 @@ def test_invalid_cached_token_falls_through_to_flow(tmp_path: Path) -> None:
         )
 
     assert creds is fresh_creds
+    fake_flow.run_local_server.assert_called_once_with(port=0)
+
+
+def test_scope_widened_forces_fresh_consent(tmp_path: Path) -> None:
+    """Token was granted only calendar.readonly; caller now wants gmail too.
+    We must re-run consent rather than return creds that would 403 at API time."""
+    token_path = tmp_path / "token.json"
+    token_path.write_text(_fake_token_json([CALENDAR_READONLY], expired=False))
+
+    narrow_creds = MagicMock()
+    narrow_creds.valid = True
+    narrow_creds.expired = False
+    narrow_creds.refresh_token = "refresh-abc"
+    narrow_creds.scopes = [CALENDAR_READONLY]
+
+    fresh_creds = MagicMock()
+    fresh_creds.to_json.return_value = _fake_token_json(ALL_SCOPES, expired=False)
+    fake_flow = MagicMock()
+    fake_flow.run_local_server.return_value = fresh_creds
+
+    with (
+        patch(
+            "email_concierge.integrations.google.auth.Credentials.from_authorized_user_file",
+            return_value=narrow_creds,
+        ),
+        patch(
+            "email_concierge.integrations.google.auth.InstalledAppFlow.from_client_config",
+            return_value=fake_flow,
+        ),
+    ):
+        creds = load_credentials(
+            token_path=token_path,
+            scopes=ALL_SCOPES,
+            client_config=FAKE_CLIENT_CONFIG,
+        )
+
+    assert creds is fresh_creds
+    narrow_creds.refresh.assert_not_called()
     fake_flow.run_local_server.assert_called_once_with(port=0)
 
 
@@ -279,11 +320,12 @@ class TestSettingsAliasesAndWrapper:
         token_path = tmp_path / "token.json"
         token_path.write_text(_fake_token_json(ALL_SCOPES, expired=False))
 
-        cfg = Settings(google_token_path=token_path)
+        cfg = Settings(_env_file=None, google_token_path=token_path)
 
         fake_creds = MagicMock()
         fake_creds.valid = True
         fake_creds.expired = False
+        fake_creds.scopes = ALL_SCOPES
         with (
             patch(
                 "email_concierge.integrations.google.auth.Credentials.from_authorized_user_file",
@@ -314,8 +356,6 @@ class TestSettingsAliasesAndWrapper:
         client_secrets.write_text(json.dumps(FAKE_CLIENT_CONFIG))
         token_path = tmp_path / "token.json"
 
-        # _env_file=None skips .env so a user-local .env that defines
-        # GOOGLE_CALENDAR_OAUTH_JSON doesn't leak into this test.
         cfg = Settings(
             _env_file=None,
             google_client_secrets_path=client_secrets,

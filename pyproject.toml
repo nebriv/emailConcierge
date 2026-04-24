@@ -31,6 +31,15 @@ dev = [
     "pytest-asyncio>=0.23",
     "ruff>=0.4",
 ]
+plid-resolver = [
+    # One-off Google Calendar training-data pairing: resolves web-UI
+    # `plid=` permalink tokens to REST-addressable Gmail thread IDs
+    # by loading them in an authenticated Chrome session. Only used
+    # by the `import-training --resolve-plids` path — not a runtime
+    # dependency of the live listener.
+    "selenium>=4.10",
+    "undetected-chromedriver>=3.5",
+]
 
 [project.scripts]
 email-concierge = "email_concierge.__main__:main"
@@ -64,16 +73,22 @@ ban-relative-imports = "all"
 "google.oauth2".msg = "Google auth must go through email_concierge.integrations.google.auth."
 "google.oauth2.credentials".msg = "Google auth must go through email_concierge.integrations.google.auth."
 "google.auth.transport.requests".msg = "Google auth must go through email_concierge.integrations.google.auth."
+"selenium".msg = "Browser automation must stay in email_concierge.integrations.google.plid_resolver."
+"selenium.webdriver".msg = "Browser automation must stay in email_concierge.integrations.google.plid_resolver."
+"undetected_chromedriver".msg = "Browser automation must stay in email_concierge.integrations.google.plid_resolver."
 
 [tool.ruff.lint.per-file-ignores]
 "email_concierge/imap_readonly.py" = ["TID251"]
 "email_concierge/integrations/google/auth.py" = ["TID251"]
 "email_concierge/integrations/google/calendar.py" = ["TID251"]
 "email_concierge/integrations/google/gmail.py" = ["TID251"]
+"email_concierge/integrations/google/plid_resolver.py" = ["TID251"]
 "tests/test_google_auth.py" = ["TID251"]
 "tests/test_google_calendar.py" = ["TID251"]
 "tests/test_google_gmail.py" = ["TID251"]
 "tests/test_import_training.py" = ["TID251"]
+"tests/test_plid_resolver.py" = ["TID251"]
+"scripts/plid_spike.py" = ["TID251"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

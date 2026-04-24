@@ -83,6 +83,29 @@ class Settings(BaseSettings):
     google_token_path: Path = Path("/data/google_token.json")
     google_calendar_id: str = "primary"
 
+    # plid-resolver (opt-in; only used by `import-training --resolve-plids`).
+    # Profile dir is a persistent Chrome user-data directory so the user
+    # only has to log in once. chrome_major pins undetected-chromedriver
+    # to the installed Chrome's major version (look at chrome://version).
+    # 0 means "let undetected-chromedriver auto-detect". The shorter env
+    # var aliases (`EMAIL_CONCIERGE_CHROME_PROFILE`, `..._CHROME_MAJOR`)
+    # match what the one-shot spike script used, so ops muscle-memory
+    # keeps working once users move from the spike to the real flag.
+    google_chrome_profile_path: Path = Field(
+        default=Path("/data/chrome-profile"),
+        validation_alias=AliasChoices(
+            "EMAIL_CONCIERGE_GOOGLE_CHROME_PROFILE_PATH",
+            "EMAIL_CONCIERGE_CHROME_PROFILE",
+        ),
+    )
+    google_chrome_major: int = Field(
+        default=0,
+        validation_alias=AliasChoices(
+            "EMAIL_CONCIERGE_GOOGLE_CHROME_MAJOR",
+            "EMAIL_CONCIERGE_CHROME_MAJOR",
+        ),
+    )
+
     # Logging
     log_level: str = "INFO"
     log_json: bool = True

@@ -48,6 +48,17 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Stop after N paired rows have been written",
     )
+    imp.add_argument(
+        "--resolve-plids",
+        action="store_true",
+        help=(
+            "Resolve Google Calendar `plid=` web-UI permalinks via a browser "
+            "session (requires the plid-resolver extras). Opens Chrome with a "
+            "persistent profile; log in to Gmail once on first use. Note: "
+            "loading a plid URL marks the email as read on the server, which "
+            "is why this is opt-in and scoped to already-read training data."
+        ),
+    )
 
     args = parser.parse_args(argv)
 
@@ -66,6 +77,7 @@ def main(argv: list[str] | None = None) -> int:
             source="google",
             since=args.since,
             limit=args.limit,
+            resolve_plids=args.resolve_plids,
         )
 
     not_yet = {"backfill", "train", "evaluate", "metrics", "export-fixtures"}

@@ -44,6 +44,9 @@ class ImportStats:
     already_seen: int = 0
     gmail_missing: int = 0
     non_gmail_skipped: int = 0
+    paired_via_heuristic: int = 0
+    paired_via_plid: int = 0
+    plid_unresolved: int = 0
     errors: list[str] = field(default_factory=list)
 
 
@@ -52,10 +55,19 @@ def import_training_command(
     source: str = "google",
     since: datetime | None = None,
     limit: int | None = None,
+    resolve_plids: bool = False,
     calendar_src_factory: Any = None,
     gmail_src_factory: Any = None,
+    plid_resolver_factory: Any = None,
 ) -> int:
     """Run one import pass. Returns process exit code.
+
+    When `resolve_plids` is True, events whose `source.url` is a web-UI
+    `plid=` permalink (common on Calendar auto-extracted events) are
+    resolved to Gmail thread IDs via a browser session — the plid-
+    resolver optional dependency group must be installed. Loading a
+    plid URL in a browser marks the underlying email as read server-
+    side, which is why this is an explicit opt-in.
 
     The *_factory parameters are injected by tests; production callers
     should leave them as None.
@@ -77,6 +89,10 @@ def import_training_command(
     )
     gmail = gmail_src_factory(creds) if gmail_src_factory else GmailSource(creds)
 
+    plid_resolver: Any = None
+    if resolve_plids:
+        plid_resolver = _build_plid_resolver(cfg, plid_resolver_factory)
+
     effective_since, effective_updated_min = _resolve_cursor(conn, since)
     log.info(
         "import_training_started",
@@ -88,48 +104,157 @@ def import_training_command(
     stats = ImportStats()
     max_updated: datetime | None = None
 
-    for event in calendar.list_auto_events(
-        since=effective_since, updated_min=effective_updated_min
-    ):
-        if event.updated and (max_updated is None or event.updated > max_updated):
-            max_updated = event.updated
+    try:
+        for event in calendar.list_auto_events(
+            since=effective_since, updated_min=effective_updated_min
+        ):
+            if event.updated and (max_updated is None or event.updated > max_updated):
+                max_updated = event.updated
 
-        gmail_id = event.gmail_message_id
-        if gmail_id is None:
-            stats.non_gmail_skipped += 1
-            continue
+            gmail_id = event.gmail_message_id
+            email: Email | None = None
+            pairing_strategy = "direct"
 
-        try:
-            email = gmail.fetch_message(gmail_id)
-        except Exception as e:  # noqa: BLE001 — we surface + continue, never crash the run
-            log.warning("gmail_fetch_failed", gmail_id=gmail_id, error=str(e))
-            stats.errors.append(f"{gmail_id}: {e}")
-            continue
+            if gmail_id is not None:
+                try:
+                    email = gmail.fetch_message(gmail_id)
+                except Exception as e:  # noqa: BLE001 — surface + continue, never crash the run
+                    log.warning("gmail_fetch_failed", gmail_id=gmail_id, error=str(e))
+                    stats.errors.append(f"{gmail_id}: {e}")
 
-        if email is None:
-            stats.gmail_missing += 1
-            continue
+            if email is None and plid_resolver is not None and event.plid:
+                thread_id = None
+                try:
+                    thread_id = plid_resolver.resolve(event.plid)
+                except Exception as e:  # noqa: BLE001 — never crash the run on a browser hiccup
+                    log.warning(
+                        "plid_resolve_failed", plid=event.plid, error=str(e)
+                    )
+                    stats.errors.append(f"plid {event.plid}: {e}")
+                if thread_id is None:
+                    stats.plid_unresolved += 1
+                else:
+                    try:
+                        email = gmail.fetch_first_in_thread(thread_id)
+                    except Exception as e:  # noqa: BLE001
+                        log.warning(
+                            "gmail_fetch_failed",
+                            thread_id=thread_id,
+                            error=str(e),
+                        )
+                        stats.errors.append(f"thread {thread_id}: {e}")
+                    if email is not None:
+                        gmail_id = thread_id
+                        pairing_strategy = "plid"
 
-        inserted = _store_row(conn, email, event, gmail_id)
-        if inserted:
-            stats.paired += 1
-            if limit is not None and stats.paired >= limit:
-                log.info("import_limit_reached", limit=limit)
-                break
-        else:
-            stats.already_seen += 1
+            if email is None and event.summary:
+                around = event.updated or event.start
+                if around is not None:
+                    try:
+                        candidate_id = gmail.find_best_message(
+                            summary=event.summary, around=around
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        log.warning(
+                            "gmail_search_failed", summary=event.summary, error=str(e)
+                        )
+                        candidate_id = None
+                    if candidate_id is not None:
+                        try:
+                            email = gmail.fetch_message(candidate_id)
+                        except Exception as e:  # noqa: BLE001
+                            log.warning(
+                                "gmail_fetch_failed", gmail_id=candidate_id, error=str(e)
+                            )
+                            stats.errors.append(f"{candidate_id}: {e}")
+                        if email is not None:
+                            gmail_id = candidate_id
+                            pairing_strategy = "heuristic"
+
+            if email is None:
+                stats.gmail_missing += 1
+                log.info(
+                    "import_skip_no_pairing",
+                    summary=event.summary,
+                    source_title=event.source_title,
+                    source_url=event.source_url,
+                    event_type=event.event_type,
+                    start=event.start.isoformat() if event.start else None,
+                    end=event.end.isoformat() if event.end else None,
+                    location=event.location,
+                    updated=event.updated.isoformat() if event.updated else None,
+                    extracted_gmail_id=event.gmail_message_id,
+                    plid=event.plid,
+                )
+                continue
+
+            assert gmail_id is not None  # set by whichever branch produced `email`
+            inserted = _store_row(conn, email, event, gmail_id)
+            if inserted:
+                stats.paired += 1
+                if pairing_strategy == "heuristic":
+                    stats.paired_via_heuristic += 1
+                elif pairing_strategy == "plid":
+                    stats.paired_via_plid += 1
+                log.info(
+                    "import_paired",
+                    pairing_strategy=pairing_strategy,
+                    sender=email.sender,
+                    subject=email.subject,
+                    gmail_id=gmail_id,
+                    paired_total=stats.paired,
+                )
+                if limit is not None and stats.paired >= limit:
+                    log.info("import_limit_reached", limit=limit)
+                    break
+            else:
+                log.info("import_skipped, already seen")
+                stats.already_seen += 1
+    finally:
+        if plid_resolver is not None:
+            plid_resolver.close()
 
     _persist_cursor(conn, max_updated)
 
     log.info(
         "import_training_done",
         paired=stats.paired,
+        paired_via_heuristic=stats.paired_via_heuristic,
+        paired_via_plid=stats.paired_via_plid,
+        plid_unresolved=stats.plid_unresolved,
         already_seen=stats.already_seen,
         gmail_missing=stats.gmail_missing,
         non_gmail_skipped=stats.non_gmail_skipped,
         error_count=len(stats.errors),
     )
     return 0
+
+
+def _build_plid_resolver(cfg: Any, factory: Any) -> Any:
+    """Construct a PlidResolver from settings or a test-supplied factory.
+
+    Kept in a helper so that tests can inject a fake resolver without
+    pulling in the Selenium dependency, and so that the ImportError path
+    (user ran `--resolve-plids` without the plid-resolver extras
+    installed) surfaces a readable message rather than a generic stack
+    trace.
+    """
+    if factory is not None:
+        resolver = factory(cfg)
+    else:
+        try:
+            from email_concierge.integrations.google.plid_resolver import PlidResolver
+        except ImportError as e:
+            raise RuntimeError(
+                "--resolve-plids requires the plid-resolver extras. "
+                "Install with: pip install -e '.[plid-resolver]'"
+            ) from e
+        resolver = PlidResolver(
+            profile_path=cfg.google_chrome_profile_path,
+            chrome_major=cfg.google_chrome_major or None,
+        )
+    resolver.ensure_logged_in()
+    return resolver
 
 
 def _resolve_cursor(
@@ -193,6 +318,7 @@ def _store_row(
                 "end": event.end.isoformat() if event.end else None,
                 "location": event.location,
             },
+            "body_html": email.body_html,
         }
     )
 
@@ -242,4 +368,31 @@ def _store_row(
         )
     except sqlite3.IntegrityError:
         return False
+
+    _store_attachments(conn, email, now)
     return True
+
+
+def _store_attachments(
+    conn: sqlite3.Connection, email: Email, now: str
+) -> None:
+    for att in email.attachments:
+        if not att.payload:
+            # Metadata-only (bytes either oversized or fetch disabled);
+            # don't take up a row for zero content.
+            continue
+        conn.execute(
+            """
+            INSERT INTO training_example_attachments (
+                message_id, filename, content_type, payload, size_bytes, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                email.message_id,
+                att.filename,
+                att.content_type,
+                att.payload,
+                len(att.payload),
+                now,
+            ),
+        )

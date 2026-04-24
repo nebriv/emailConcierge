@@ -11,7 +11,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from email_concierge.integrations.google.calendar import GoogleCalendarSource
-from email_concierge.integrations.google.models import GoogleEvent, _extract_gmail_id
+from email_concierge.integrations.google.models import (
+    GoogleEvent,
+    _extract_gmail_id,
+    _extract_plid,
+)
 
 
 class TestGmailIdExtraction:
@@ -32,6 +36,54 @@ class TestGmailIdExtraction:
 
     def test_malformed_gmail_url_returns_none(self) -> None:
         assert _extract_gmail_id("https://mail.google.com/mail/u/0/#inbox/") is None
+
+    def test_plid_query_param_not_treated_as_rest_id(self) -> None:
+        """plid tokens are web-UI permalinks; the Gmail REST API rejects them.
+
+        _extract_gmail_id deliberately does NOT surface them — the command
+        layer routes plids through the separate `plid` property and the
+        browser-backed resolver.
+        """
+        url = (
+            "https://mail.google.com/mail?extsrc=cal&"
+            "plid=ACUX6DNbghpY3oV27XhjLmK0cCjD2epfA3s_ljQ"
+        )
+        assert _extract_gmail_id(url) is None
+
+    def test_fragment_wins_over_query(self) -> None:
+        """Fragment ID is a real REST ID; prefer it when a fragment is present."""
+        url = (
+            "https://mail.google.com/mail?plid=ACUX6DNb_not_a_rest_id_XYZ"
+            "#inbox/17f2e3a9b1c4d5e6"
+        )
+        assert _extract_gmail_id(url) == "17f2e3a9b1c4d5e6"
+
+
+class TestPlidExtraction:
+    def test_extracts_plid_query_param(self) -> None:
+        url = (
+            "https://mail.google.com/mail?extsrc=cal&"
+            "plid=ACUX6DNbghpY3oV27XhjLmK0cCjD2epfA3s_ljQ"
+        )
+        assert _extract_plid(url) == "ACUX6DNbghpY3oV27XhjLmK0cCjD2epfA3s_ljQ"
+
+    def test_no_plid_returns_none(self) -> None:
+        url = "https://mail.google.com/mail/u/0/#inbox/17f2e3a9b1c4d5e6"
+        assert _extract_plid(url) is None
+
+    def test_non_gmail_returns_none(self) -> None:
+        assert _extract_plid("https://example.com/?plid=foo") is None
+
+    def test_event_plid_property(self) -> None:
+        ev = GoogleEvent(
+            event_id="e",
+            summary="Flight",
+            start="2026-05-01T10:00:00+00:00",
+            source_url="https://mail.google.com/mail?extsrc=cal&plid=TOKENVALUE",
+            event_type="fromGmail",
+        )
+        assert ev.plid == "TOKENVALUE"
+        assert ev.gmail_message_id is None
 
 
 class TestGoogleEventModel:

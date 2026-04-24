@@ -70,19 +70,34 @@ def load_credentials(
             f"Scopes {bad} are not on the read-only allowlist: {sorted(_ALLOWED_SCOPES)}"
         )
 
+    requested = set(scopes)
     creds: Credentials | None = None
     if token_path.exists():
         creds = Credentials.from_authorized_user_file(str(token_path), scopes)
 
-    if creds and creds.valid:
+    # The cached token might have been granted a narrower set of scopes
+    # than we need now (common when a user first consented before Gmail
+    # API was enabled in their project). Detect that and force
+    # re-consent instead of silently returning permissionless creds.
+    granted = set(creds.scopes or []) if creds else set()
+    scope_widened = creds is not None and not requested.issubset(granted)
+
+    if creds and creds.valid and not scope_widened:
         log.info("google_auth_loaded", source="cache")
         return creds
 
-    if creds and creds.expired and creds.refresh_token:
+    if creds and creds.expired and creds.refresh_token and not scope_widened:
         log.info("google_auth_refreshing")
         creds.refresh(Request())
         _persist_token(token_path, creds)
         return creds
+
+    if scope_widened:
+        log.info(
+            "google_auth_scope_widened",
+            granted=sorted(granted),
+            requested=sorted(requested),
+        )
 
     flow = _build_flow(
         scopes=scopes,

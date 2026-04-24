@@ -105,6 +105,19 @@ class GoogleCalendarSource:
                     continue
                 if not ev.is_from_gmail:
                     continue
+                log.debug(
+                    "google_calendar_raw_event",
+                    event_id=ev.event_id,
+                    keys=sorted(raw.keys()),
+                    source=raw.get("source"),
+                    summary=raw.get("summary"),
+                    description=raw.get("description"),
+                    attendees=raw.get("attendees"),
+                    organizer=raw.get("organizer"),
+                    creator=raw.get("creator"),
+                    extended_properties=raw.get("extendedProperties"),
+                    ical_uid=raw.get("iCalUID"),
+                )
                 yield ev
             page_token = resp.get("nextPageToken")
             if not page_token:

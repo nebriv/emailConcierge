@@ -64,6 +64,20 @@ CREATE TABLE IF NOT EXISTS google_sync_state (
     cursor              TEXT,
     last_synced_at      TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS training_example_attachments (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id          TEXT NOT NULL,
+    filename            TEXT NOT NULL,
+    content_type        TEXT NOT NULL,
+    payload             BLOB NOT NULL,
+    size_bytes          INTEGER NOT NULL,
+    created_at          TEXT NOT NULL,
+    FOREIGN KEY (message_id) REFERENCES training_examples(message_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tea_message
+    ON training_example_attachments(message_id);
 """
 
 
