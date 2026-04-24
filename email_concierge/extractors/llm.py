@@ -18,6 +18,12 @@ log = get_logger(__name__)
 
 
 MAX_BODY_CHARS = 8000
+# Below this many characters of usable body text, the LLM starts
+# hallucinating events out of the subject line alone. Short subjects like
+# "Your order" + empty body is a classic prompt-injection-adjacent
+# failure: the model invents a plausible reservation to satisfy the
+# schema. Skip the call entirely and let the router fall through.
+MIN_BODY_CHARS = 80
 
 
 class _LlmEventSchema(BaseModel):
@@ -69,6 +75,14 @@ class LlmExtractor:
 
         t0 = time.perf_counter()
         body = _prepare_body(email)
+        if len(body) < MIN_BODY_CHARS:
+            log.debug(
+                "llm_skipped_empty_body",
+                message_id=email.message_id,
+                body_len=len(body),
+                subject=email.subject,
+            )
+            return None
         prompt = _render_prompt(
             self._prompt_template,
             sender=email.sender,

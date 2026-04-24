@@ -8,6 +8,12 @@ import pytest
 
 from email_concierge.extractors.llm import LlmExtractor
 
+# Long enough to pass the empty-body guard, short enough to keep fixtures tidy.
+_SAMPLE_BODY = (
+    "Hello, your reservation is confirmed for Thursday at 7:30 PM. "
+    "We look forward to seeing you at the restaurant."
+)
+
 
 def _fake_response(content: str):
     return SimpleNamespace(
@@ -50,7 +56,7 @@ def test_llm_extracts_valid_event(make_email):
         "description": "Party of 4",
     }
     ext = _build_extractor_with_fake(json.dumps(payload))
-    result = ext.extract(make_email(subject="Your reservation"))
+    result = ext.extract(make_email(subject="Your reservation", body_text=_SAMPLE_BODY))
     assert result is not None
     assert result.handled_by_stage == 4
     assert result.confidence == pytest.approx(0.95)
@@ -61,23 +67,23 @@ def test_llm_extracts_valid_event(make_email):
 def test_llm_returns_none_when_is_event_false(make_email):
     payload = {"is_event": False, "confidence": 0.9, "title": None, "start": None}
     ext = _build_extractor_with_fake(json.dumps(payload))
-    assert ext.extract(make_email()) is None
+    assert ext.extract(make_email(body_text=_SAMPLE_BODY)) is None
 
 
 def test_llm_returns_none_on_invalid_json(make_email):
     ext = _build_extractor_with_fake("this is not json")
-    assert ext.extract(make_email()) is None
+    assert ext.extract(make_email(body_text=_SAMPLE_BODY)) is None
 
 
 def test_llm_returns_none_on_schema_mismatch(make_email):
     # is_event missing entirely.
     ext = _build_extractor_with_fake(json.dumps({"confidence": 0.9, "title": "x"}))
-    assert ext.extract(make_email()) is None
+    assert ext.extract(make_email(body_text=_SAMPLE_BODY)) is None
 
 
 def test_llm_returns_none_on_api_exception(make_email):
     ext = _build_extractor_with_fake(RuntimeError("network down"))
-    assert ext.extract(make_email()) is None
+    assert ext.extract(make_email(body_text=_SAMPLE_BODY)) is None
 
 
 def test_llm_returns_none_when_datetime_missing_timezone(make_email):
@@ -88,7 +94,7 @@ def test_llm_returns_none_when_datetime_missing_timezone(make_email):
         "start": "2050-07-04T19:30:00",  # no offset
     }
     ext = _build_extractor_with_fake(json.dumps(payload))
-    assert ext.extract(make_email()) is None
+    assert ext.extract(make_email(body_text=_SAMPLE_BODY)) is None
 
 
 def test_llm_returns_none_when_is_event_true_but_start_missing(make_email):
@@ -99,4 +105,13 @@ def test_llm_returns_none_when_is_event_true_but_start_missing(make_email):
         "start": None,
     }
     ext = _build_extractor_with_fake(json.dumps(payload))
-    assert ext.extract(make_email()) is None
+    assert ext.extract(make_email(body_text=_SAMPLE_BODY)) is None
+
+
+def test_llm_skips_call_when_body_too_short(make_email):
+    """A near-empty body means no context — the LLM would hallucinate. Skip."""
+    ext = _build_extractor_with_fake(json.dumps({"is_event": True, "confidence": 0.9}))
+    result = ext.extract(make_email(subject="Your order", body_text="Thanks!"))
+    assert result is None
+    # Confirm the short-circuit fired before the HTTP layer was touched.
+    ext._client.chat.completions.create.assert_not_called()
