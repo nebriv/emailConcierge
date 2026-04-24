@@ -1,0 +1,89 @@
+from __future__ import annotations
+
+from functools import lru_cache
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _csv(value: str | list[str] | None) -> list[str]:
+    if value is None or value == "":
+        return []
+    if isinstance(value, list):
+        return [v.strip() for v in value if v.strip()]
+    return [v.strip() for v in value.split(",") if v.strip()]
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="EMAIL_CONCIERGE_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # IMAP
+    imap_host: str = "mail.example.com"
+    imap_port: int = 993
+    imap_username: str = "user@example.com"
+    imap_password: str = ""
+    imap_folder: str = "INBOX"
+    imap_use_ssl: bool = True
+    imap_reconnect_seconds: int = 30
+
+    # Sender filtering
+    sender_allow: str = ""
+    sender_deny: str = ""
+
+    # Pipeline
+    min_confidence: float = 0.7
+    can_handle_floor: float = 0.5
+    disabled_plugins: str = ""
+    disable_llm: bool = False
+
+    # LLM (stage 4)
+    llm_base_url: str = "http://ollama:11434/v1"
+    llm_api_key: str = "ollama"
+    llm_model: str = "llama3.2:3b"
+    llm_timeout_seconds: int = 60
+
+    # NER / classifier (reserved for Phase 5)
+    gliner_model: str = "urchade/gliner_small-v2.1"
+    classifier_path: Path = Path("/data/models/classifier.pkl")
+    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+
+    # CalDAV
+    caldav_url: str = ""
+    caldav_username: str = ""
+    caldav_password: str = ""
+    caldav_calendar: str = "auto-imported"
+
+    # Behavior
+    user_timezone: str = "America/New_York"
+    dry_run: bool = False
+    feedback_window_hours: int = 24
+
+    # Storage
+    db_path: Path = Path("/data/email-concierge.db")
+    models_dir: Path = Path("/data/models")
+
+    # Logging
+    log_level: str = "INFO"
+    log_json: bool = True
+
+    @property
+    def sender_allow_list(self) -> list[str]:
+        return _csv(self.sender_allow)
+
+    @property
+    def sender_deny_list(self) -> list[str]:
+        return _csv(self.sender_deny)
+
+    @property
+    def disabled_plugins_list(self) -> list[str]:
+        return _csv(self.disabled_plugins)
+
+
+@lru_cache(maxsize=1)
+def settings() -> Settings:
+    return Settings()

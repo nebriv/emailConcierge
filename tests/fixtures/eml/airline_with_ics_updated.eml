@@ -1,0 +1,29 @@
+From: United Airlines <receipts@united.com>
+To: ben@example.com
+Subject: UPDATED: Flight UA123 rescheduled
+Date: Fri, 24 Apr 2026 01:49:25 -0000
+Message-ID: <replay-airline-ua123-update@email-concierge-test>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="===============4129912382397238992=="
+
+--===============4129912382397238992==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Your flight has been rescheduled by one hour. See updated invite.
+
+--===============4129912382397238992==
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="invite.ics"
+Content-Type: text/calendar; method="PUBLISH"
+MIME-Version: 1.0
+
+QkVHSU46VkNBTEVOREFSClZFUlNJT046Mi4wClBST0RJRDotLy9Vbml0ZWQgQWlybGluZXMvL0Zs
+aWdodCBDb25maXJtYXRpb24vL0VOCk1FVEhPRDpQVUJMSVNICkJFR0lOOlZFVkVOVApVSUQ6VUEx
+MjMtU0ZPRVdSLTIwNTAwNjE0QHVuaXRlZC5jb20KRFRTVEFNUDoyMDUwMDYwMlQxMjAwMDBaCkRU
+U1RBUlQ6MjA1MDA2MTRUMTYwMDAwWgpEVEVORDoyMDUwMDYxNVQwMDAwMDBaClNVTU1BUlk6VW5p
+dGVkIFVBMTIzOiBTRk8gdG8gRVdSIChSRVNDSEVEVUxFRCArMWgpCkxPQ0FUSU9OOlNGTyBUZXJt
+aW5hbCAzCkRFU0NSSVBUSU9OOkZsaWdodCBVQTEyMyBkZWxheWVkIG9uZSBob3VyLiBDb25maXJt
+YXRpb24gQUJDMTIzLgpFTkQ6VkVWRU5UCkVORDpWQ0FMRU5EQVIK
+
+--===============4129912382397238992==--
