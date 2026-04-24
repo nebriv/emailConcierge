@@ -67,8 +67,22 @@ def process_email(
         if result is None:
             status = "no_extraction"
         else:
-            sink.write(result, email.message_id)
-            status = "processed"
+            reject = _validate(result, email)
+            if reject is not None:
+                log.info(
+                    "extraction_rejected",
+                    message_id=email.message_id,
+                    sender=email.sender,
+                    subject=email.subject,
+                    stage=result.handled_by_stage,
+                    name=result.handled_by_name,
+                    reason=reject,
+                )
+                result = None
+                status = "rejected"
+            else:
+                sink.write(result, email.message_id)
+                status = "processed"
     except Exception as e:
         log.exception(
             "pipeline_failed",
@@ -92,7 +106,7 @@ def process_email(
         conn,
         email,
         label="event" if result else "neither",
-        label_source="auto",
+        label_source="auto_rejected" if status == "rejected" else "auto",
         extracted=result.parsed.model_dump(mode="json") if result else None,
     )
 
@@ -108,6 +122,43 @@ def process_email(
         source=source,
     )
     return status
+
+
+def _validate(result: ExtractionResult, email: Email) -> str | None:
+    """Cross-extractor sanity checks before we commit to writing the event.
+
+    Returns None if the extraction looks trustworthy, or a short reason
+    string if it should be rejected. The router already gates on
+    confidence; this is the second, content-aware gate.
+
+    Rules:
+    - Temporal: the event must be in the future relative to when the
+      email arrived. Past-tense receipts ("thanks for your ride on
+      April 8") are frequent false positives and never belong on a
+      forward-looking calendar.
+    - Commitment: Stage 3 (NER) and Stage 4 (LLM) must produce
+      commitment_evidence. Stages 1 (.ics) and 2 (plugins) have
+      structural proof instead (a real calendar attachment, a matched
+      vendor template) so they skip this check.
+    """
+    start = result.parsed.start
+    end = result.parsed.end
+    latest = end if end is not None and end > start else start
+    # Small grace margin — an email arriving seconds after the event
+    # begins still counts as a just-in-time confirmation, not a receipt.
+    grace_seconds = 300
+    if (latest - email.received_at).total_seconds() < -grace_seconds:
+        return (
+            f"event_in_past (start={start.isoformat()}, "
+            f"received_at={email.received_at.isoformat()})"
+        )
+
+    if result.handled_by_stage in (3, 4):
+        evidence = (result.commitment_evidence or "").strip()
+        if len(evidence) < 8:
+            return "missing_commitment_evidence"
+
+    return None
 
 
 def _already_processed(conn: sqlite3.Connection, message_id: str) -> bool:
