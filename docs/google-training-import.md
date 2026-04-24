@@ -123,6 +123,95 @@ sqlite3 /data/email-concierge.db \
    LIMIT 10"
 ```
 
+## Running the import on a prod / containerized deployment
+
+The OAuth consent flow requires a browser on the same machine
+(`InstalledAppFlow.run_local_server` opens `http://localhost:<port>`
+and waits for the redirect). A headless Arcane / Portainer / bare
+Docker host doesn't have one. Two ways around it — **seed the token
+from dev** is the simpler path for most users.
+
+### Option 1 — seed the token from a dev machine (recommended)
+
+1. On a workstation with a browser, point the same
+   `GOOGLE_CALENDAR_OAUTH_JSON` at your dev `.env` and run:
+   ```bash
+   python -m email_concierge import-training --from-google --limit=1
+   ```
+   Click through the consent screen. This produces
+   `data/google_token.json` (refresh-token included — it doesn't
+   expire on its own, only if Google revokes it or you rotate).
+2. Copy that token into the prod container's volume:
+   ```bash
+   # For the docker-compose.prod.yaml named volume:
+   docker cp data/google_token.json <stack-container>:/data/google_token.json
+   # Or with a helper container if the main one isn't running yet:
+   docker run --rm -v email_concierge_data:/data -v "$PWD/data":/src \
+     alpine cp /src/google_token.json /data/google_token.json
+   ```
+3. Run the import inside the prod container:
+   ```bash
+   docker exec -it <stack-container> python -m email_concierge \
+     import-training --from-google
+   ```
+   The cached token loads, auto-refreshes as needed, and never opens
+   a browser.
+
+The `GOOGLE_CALENDAR_OAUTH_JSON` env var still needs to be set on the
+prod stack — it's used to re-run the consent flow if the token is
+ever invalidated, and for the refresh grant.
+
+### Option 2 — one-time port-forward for interactive consent
+
+If you prefer to authorize directly against the prod account without
+touching a dev box:
+
+```bash
+docker run --rm -it \
+  -p 8080:8080 \
+  -v email_concierge_data:/data \
+  --env-file .env \
+  ghcr.io/nebriv/emailconcierge:main \
+  python -m email_concierge import-training --from-google --limit=1
+```
+
+SSH-tunnel port 8080 back to your laptop (`ssh -L 8080:localhost:8080
+prod-host`) and visit the consent URL that the container logs. The
+token is persisted to the same `/data` volume the stack uses, so
+subsequent stack-run invocations pick it up transparently.
+
+### Scheduling periodic imports
+
+Training data import isn't a daemon — it's one-shot. To keep the
+training corpus growing, cron it on the host:
+
+```cron
+# Weekly catch-up — stays idempotent via the UNIQUE(message_id)
+# constraint and the google_sync_state cursor.
+15 3 * * 0  docker exec <stack-container> python -m email_concierge import-training --from-google
+```
+
+Or use Arcane's stack-local task scheduler if you have one configured.
+
+### Volume persistence
+
+The prod compose file (`docker-compose.prod.yaml`) mounts the named
+volume `email_concierge_data` at `/data`. Everything Google-related
+lives there:
+
+| Path | What | Survives redeploy? |
+|---|---|---|
+| `/data/email-concierge.db` | SQLite — training_examples, processed_messages, google_sync_state | yes |
+| `/data/google_token.json` | Cached OAuth token (refresh included) | yes |
+| `/data/google_client_secrets.json` | Optional on-disk client JSON (skip if using the env var) | yes |
+
+Back it up with:
+
+```bash
+docker run --rm -v email_concierge_data:/data -v "$PWD":/backup \
+  alpine tar czf /backup/email-concierge-$(date +%F).tgz -C /data .
+```
+
 ## Revoking access
 
 If you uninstall or rotate:
