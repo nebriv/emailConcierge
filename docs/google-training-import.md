@@ -125,13 +125,23 @@ sqlite3 /data/email-concierge.db \
 
 ## Running the import on a prod / containerized deployment
 
-The OAuth consent flow requires a browser on the same machine
-(`InstalledAppFlow.run_local_server` opens `http://localhost:<port>`
-and waits for the redirect). A headless Arcane / Portainer / bare
-Docker host doesn't have one. Two ways around it — **seed the token
-from dev** is the simpler path for most users.
+The OAuth consent flow starts a local HTTP server on a random free
+port bound to `127.0.0.1` *inside the container*
+(`flow.run_local_server(port=0)` in
+[`integrations/google/auth.py`](../email_concierge/integrations/google/auth.py)).
+Docker port mapping can't reach that bind, and the random port
+wouldn't match a fixed `-p` anyway, so you can't just SSH-tunnel into
+consent on a prod container. (Google itself is happy to redirect to
+`http://localhost:<port>` through an SSH tunnel — loopback is trusted
+for Desktop-app clients — but the library's defaults get in the way
+first.)
 
-### Option 1 — seed the token from a dev machine (recommended)
+Easiest path: **seed the token from a machine that does have a
+browser**, then copy the token into the prod volume. The token
+includes a refresh grant that doesn't expire unless Google revokes it
+or you rotate, so this is a one-time setup.
+
+### Seeding the token from a dev machine
 
 1. On a workstation with a browser, point the same
    `GOOGLE_CALENDAR_OAUTH_JSON` at your dev `.env` and run:
@@ -158,27 +168,9 @@ from dev** is the simpler path for most users.
    a browser.
 
 The `GOOGLE_CALENDAR_OAUTH_JSON` env var still needs to be set on the
-prod stack — it's used to re-run the consent flow if the token is
-ever invalidated, and for the refresh grant.
-
-### Option 2 — one-time port-forward for interactive consent
-
-If you prefer to authorize directly against the prod account without
-touching a dev box:
-
-```bash
-docker run --rm -it \
-  -p 8080:8080 \
-  -v email_concierge_data:/data \
-  --env-file .env \
-  ghcr.io/nebriv/emailconcierge:main \
-  python -m email_concierge import-training --from-google --limit=1
-```
-
-SSH-tunnel port 8080 back to your laptop (`ssh -L 8080:localhost:8080
-prod-host`) and visit the consent URL that the container logs. The
-token is persisted to the same `/data` volume the stack uses, so
-subsequent stack-run invocations pick it up transparently.
+prod stack — it's used for the refresh grant, and to re-run the
+consent flow if the token is ever invalidated (in which case you'd
+just re-seed it the same way).
 
 ### Scheduling periodic imports
 
