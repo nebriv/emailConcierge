@@ -97,7 +97,15 @@ def test_assemble_returns_none_for_incomplete(make_email):
     assert _assemble(entities, make_email()) is None
 
 
-def test_extractor_returns_none_when_ner_unavailable(make_email):
+def test_extractor_returns_none_when_ner_unavailable(make_email, monkeypatch):
+    # Simulate the "ML extras not installed" case. The constructor autowires
+    # a real NerExtractor when one is available, so we have to suppress that
+    # path explicitly — passing ner=None is a "let me decide" signal, not a
+    # "force-disable" one.
+    monkeypatch.setattr(
+        "email_concierge.extractors.ner.NerExtractor.available",
+        staticmethod(lambda: False),
+    )
     extractor = NerEventExtractor(ner=None, classifier=None)
     assert extractor.can_handle(make_email()) == 0.0
     assert extractor.extract(make_email()) is None
