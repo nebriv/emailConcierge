@@ -1,0 +1,9 @@
+services:
+  email-concierge:
+    build: .
+    image: email-concierge:local
+    container_name: email-concierge
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/data

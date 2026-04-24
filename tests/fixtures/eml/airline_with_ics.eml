@@ -1,0 +1,36 @@
+From: United Airlines <receipts@united.com>
+To: ben@example.com
+Subject: Your e-Ticket Confirmation: UA123 SFO-EWR
+Date: Fri, 24 Apr 2026 01:47:08 -0000
+Message-ID: <replay-airline-ua123@email-concierge-test>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="===============5373895081922327319=="
+
+--===============5373895081922327319==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Dear Ben,
+
+Your flight is confirmed. Confirmation code ABC123.
+
+Flight UA123 from San Francisco (SFO) to Newark (EWR) on June 14, 2050.
+Departs 15:00 UTC, arrives 23:00 UTC.
+
+See attached calendar invite.
+
+--===============5373895081922327319==
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="invite.ics"
+Content-Type: text/calendar; method="PUBLISH"; name="invite.ics"
+MIME-Version: 1.0
+
+QkVHSU46VkNBTEVOREFSClZFUlNJT046Mi4wClBST0RJRDotLy9Vbml0ZWQgQWlybGluZXMvL0Zs
+aWdodCBDb25maXJtYXRpb24vL0VOCk1FVEhPRDpQVUJMSVNICkJFR0lOOlZFVkVOVApVSUQ6VUEx
+MjMtU0ZPRVdSLTIwNTAwNjE0QHVuaXRlZC5jb20KRFRTVEFNUDoyMDUwMDYwMVQxMjAwMDBaCkRU
+U1RBUlQ6MjA1MDA2MTRUMTUwMDAwWgpEVEVORDoyMDUwMDYxNFQyMzAwMDBaClNVTU1BUlk6VW5p
+dGVkIFVBMTIzOiBTRk8gdG8gRVdSCkxPQ0FUSU9OOlNhbiBGcmFuY2lzY28gSW50ZXJuYXRpb25h
+bCBBaXJwb3J0IChTRk8pCkRFU0NSSVBUSU9OOkZsaWdodCBVQTEyMyBmcm9tIFNGTyB0byBFV1Iu
+IENvbmZpcm1hdGlvbjogQUJDMTIzLgpFTkQ6VkVWRU5UCkVORDpWQ0FMRU5EQVIK
+
+--===============5373895081922327319==--
