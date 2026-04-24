@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     user_timezone: str = "America/New_York"
     dry_run: bool = False
     feedback_window_hours: int = 24
+    # How often the listener runs the feedback scan (CalDAV deletes →
+    # negative training labels). Set to 0 to disable in-process scans
+    # and run `email_concierge feedback` from cron instead.
+    feedback_scan_interval_minutes: int = 15
 
     # Storage
     db_path: Path = Path("/data/email-concierge.db")

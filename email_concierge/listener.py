@@ -7,6 +7,7 @@ import time
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 
+from email_concierge.commands.feedback import feedback_command
 from email_concierge.config import settings
 from email_concierge.extractors.base import Extractor
 from email_concierge.imap_readonly import ReadOnlyMailbox
@@ -37,6 +38,7 @@ def run(
     stop_event = stop_event or _install_signal_handler()
     cfg = settings()
     backoff = cfg.imap_reconnect_seconds
+    feedback_state = _FeedbackState()
 
     while not stop_event.is_set():
         try:
@@ -50,6 +52,7 @@ def run(
                 )
 
                 _catch_up(mb, extractors, sink, conn)
+                _maybe_run_feedback(feedback_state)
 
                 while not stop_event.is_set():
                     had_activity = mb.idle_wait(IDLE_TIMEOUT_SECONDS)
@@ -61,6 +64,7 @@ def run(
                     # re-check on timeout is cheap insurance against a
                     # missed IDLE notification.
                     _catch_up(mb, extractors, sink, conn)
+                    _maybe_run_feedback(feedback_state)
             backoff = cfg.imap_reconnect_seconds
         except KeyboardInterrupt:
             break
@@ -146,3 +150,31 @@ def _sleep_with_stop(stop_event: threading.Event, seconds: int) -> None:
     deadline = time.monotonic() + seconds
     while not stop_event.is_set() and time.monotonic() < deadline:
         stop_event.wait(timeout=min(1.0, deadline - time.monotonic()))
+
+
+class _FeedbackState:
+    """Tracks when the feedback scan last ran, so it fires on an interval
+    rather than on every IDLE wake.
+    """
+
+    __slots__ = ("last_run_monotonic",)
+
+    def __init__(self) -> None:
+        # None means "not yet run in this process" — first catch-up triggers it.
+        self.last_run_monotonic: float | None = None
+
+
+def _maybe_run_feedback(state: _FeedbackState) -> None:
+    cfg = settings()
+    interval_s = cfg.feedback_scan_interval_minutes * 60
+    if interval_s <= 0:
+        return  # disabled; operator prefers cron
+    now = time.monotonic()
+    if state.last_run_monotonic is not None:
+        if (now - state.last_run_monotonic) < interval_s:
+            return
+    try:
+        feedback_command()
+    except Exception:  # noqa: BLE001 — feedback failure should never kill the listener
+        log.exception("feedback_scan_failed")
+    state.last_run_monotonic = now
