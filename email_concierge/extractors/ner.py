@@ -177,10 +177,12 @@ def _assemble(entities: list[Entity], email: Email) -> _Assembled | None:
         if built is not None:
             return built
 
-    # Hotel rule: hotel name + check-in date → stay event.
-    if by_label.get("hotel name") and (
-        by_label.get("check-in date") or by_label.get("date")
-    ):
+    # Hotel rule: hotel name + an explicit `check-in date` span.
+    # Previously we fell back to any "date" entity, which turned every
+    # marketing email mentioning a Marriott into a calendar event. A
+    # check-in date is a much stronger signal: the NER has decided this
+    # date belongs to a booking, not just any date in the body.
+    if by_label.get("hotel name") and by_label.get("check-in date"):
         built = _build_hotel(by_label, email)
         if built is not None:
             return built
@@ -230,7 +232,7 @@ def _build_hotel(by_label: dict[str, list[Entity]], _email: Email) -> _Assembled
         return None
     hotel = hotels[0].text
 
-    check_in = _first_parsed_date(by_label, "check-in date") or _first_date(by_label)
+    check_in = _first_parsed_date(by_label, "check-in date")
     if check_in is None:
         return None
     check_out = _first_parsed_date(by_label, "check-out date")
