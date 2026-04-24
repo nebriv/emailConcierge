@@ -61,7 +61,7 @@ def train_command(*, kind: str = "classifier", dry_run: bool = False) -> int:
     texts, labels = _load_labeled_rows(conn)
     n_event = labels.count("event")
     n_neither = labels.count("neither")
-    log.info("train_loaded_rows", total=len(texts), event=n_event, neither=n_neither)
+    log.info("train_loaded_rows", total=len(texts), n_event=n_event, n_neither=n_neither)
 
     if n_event < _MIN_PER_CLASS or n_neither < _MIN_PER_CLASS:
         log.error(
@@ -87,7 +87,7 @@ def train_command(*, kind: str = "classifier", dry_run: bool = False) -> int:
         log.info("train_dry_run_complete", metrics=metrics.to_json())
         return 0
 
-    artifact_path = Path(cfg.classifier_path)
+    artifact_path = cfg.resolved_classifier_path
     classifier.save(artifact_path)
     _record_model_version(conn, artifact_path, metrics)
     log.info(

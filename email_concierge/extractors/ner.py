@@ -84,7 +84,7 @@ class NerEventExtractor:
         if classifier is not None:
             self._clf: EventClassifier | None = classifier
         else:
-            self._clf = _try_load_classifier(Path(cfg.classifier_path))
+            self._clf = _try_load_classifier(cfg.resolved_classifier_path)
 
     def can_handle(self, email: Email) -> float:
         if self._ner is None:

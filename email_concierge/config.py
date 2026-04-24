@@ -48,9 +48,13 @@ class Settings(BaseSettings):
     llm_model: str = "llama3.2:3b"
     llm_timeout_seconds: int = 60
 
-    # NER / classifier (reserved for Phase 5)
+    # NER / classifier (reserved for Phase 5).
+    # classifier_path defaults to `<models_dir>/classifier.pkl`. Users
+    # overriding `models_dir` (host-mode deployments) don't need to
+    # override this separately; only set the env var if you want to
+    # pin a versioned artifact elsewhere.
     gliner_model: str = "urchade/gliner_small-v2.1"
-    classifier_path: Path = Path("/data/models/classifier.pkl")
+    classifier_path: Path | None = None
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
 
     # CalDAV
@@ -109,6 +113,11 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
     log_json: bool = True
+
+    @property
+    def resolved_classifier_path(self) -> Path:
+        """Classifier artifact path, defaulting under models_dir."""
+        return self.classifier_path or (self.models_dir / "classifier.pkl")
 
     @property
     def sender_allow_list(self) -> list[str]:
