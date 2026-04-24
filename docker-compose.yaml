@@ -27,9 +27,13 @@ services:
     # Usage:
     #   docker compose up -d           # start in background
     #   docker attach email-concierge  # get the REPL
-    #     (Ctrl-P Ctrl-Q to detach without stopping)
+    #     (Ctrl-P Ctrl-Q to detach without stopping the container)
+    #   docker compose down            # stop everything
     #
-    #   docker compose up              # start attached (REPL in your term)
+    # NOTE: `docker compose up` (attached, no -d) shows the container's
+    # stdout but does NOT reliably forward keystrokes into the REPL,
+    # especially on Windows / PowerShell. Always use `up -d` + `attach`
+    # for interactive use. Log streaming alone: `docker compose logs -f`.
     #
     #   At the `emc>` prompt:
     #     status                       # listener state + DB counters
