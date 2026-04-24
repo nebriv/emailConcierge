@@ -82,6 +82,20 @@ def process_email(
                 result = None
                 status = "rejected"
             else:
+                # The sink inserts into calendar_events, which has a
+                # FK → processed_messages(message_id). Write the parent
+                # row first so the FK is satisfied. The final
+                # _record_processed call below will REPLACE this with
+                # the same values on success, or with status='failed'
+                # if the sink raises.
+                _record_processed(
+                    conn, email,
+                    stage=result.handled_by_stage,
+                    name=result.handled_by_name,
+                    confidence=result.confidence,
+                    status="processed",
+                    error=None,
+                )
                 sink.write(result, email.message_id)
                 status = "processed"
     except Exception as e:

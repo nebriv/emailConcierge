@@ -240,3 +240,46 @@ def test_sink_exception_marks_failed(
     row = tmp_db.execute("SELECT status, error FROM processed_messages").fetchone()
     assert row["status"] == "failed"
     assert "caldav down" in row["error"]
+
+
+def test_sink_inserting_into_calendar_events_does_not_hit_fk_violation(
+    tmp_db, make_email, make_result, stub_extractor
+):
+    """calendar_events has a FK to processed_messages; pipeline must write
+    the parent row before the sink tries to insert the child. Regression
+    test for the first real CalDAV write blowing up."""
+    from datetime import UTC, datetime
+
+    class CalendarEventsWritingSink:
+        """Mirrors CaldavSink's DB-side insert without the network call."""
+        def __init__(self, conn):
+            self._conn = conn
+
+        def write(self, result, message_id):
+            uid = result.parsed.ical_uid or f"uid-{message_id}"
+            now = datetime.now(tz=UTC).isoformat()
+            self._conn.execute(
+                """
+                INSERT OR REPLACE INTO calendar_events
+                  (ical_uid, message_id, caldav_url, summary, starts_at,
+                   created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (uid, message_id, "http://fake", result.parsed.title,
+                 result.parsed.start.isoformat(), now, now),
+            )
+            return uid
+
+    email = make_email(message_id="<fk@x>")
+    ext = stub_extractor("ics", stage=1, result=make_result(stage=1, name="ics"))
+    sink = CalendarEventsWritingSink(tmp_db)
+
+    status = process_email(email, tmp_db, [ext], sink)
+    assert status == "processed"
+    # Both tables should have the row, FK intact.
+    assert tmp_db.execute(
+        "SELECT 1 FROM processed_messages WHERE message_id = ?", ("<fk@x>",),
+    ).fetchone() is not None
+    assert tmp_db.execute(
+        "SELECT 1 FROM calendar_events WHERE message_id = ?", ("<fk@x>",),
+    ).fetchone() is not None
