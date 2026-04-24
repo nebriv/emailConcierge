@@ -57,7 +57,9 @@ def shell_command(*, start_listener: bool = True) -> int:
 
 def _listener_worker(stop_event: threading.Event) -> None:
     """Mirror of commands.run.run_command but driven by an external stop
-    event so the shell can pause/resume the listener without exiting."""
+    event so the shell can pause/resume the listener without exiting.
+    Spawns one sub-thread per configured account (see
+    listener.run_all_accounts)."""
     from email_concierge import listener
     from email_concierge.extractors.base import Extractor
     from email_concierge.extractors.discovery import discover_plugins
@@ -70,7 +72,7 @@ def _listener_worker(stop_event: threading.Event) -> None:
     log.info(
         "listener_thread_starting",
         dry_run=cfg.dry_run,
-        folder=cfg.imap_folder,
+        accounts=[a.name for a in cfg.accounts],
         disable_llm=cfg.disable_llm,
     )
     conn = db.connect(cfg.db_path)
@@ -84,7 +86,7 @@ def _listener_worker(stop_event: threading.Event) -> None:
     ]
     sink = CaldavSink(conn)
     try:
-        listener.run(extractors, sink, conn, stop_event=stop_event)
+        listener.run_all_accounts(extractors, sink, conn, stop_event=stop_event)
     except Exception:  # noqa: BLE001
         log.exception("listener_thread_crashed")
     finally:
@@ -118,6 +120,7 @@ def _build_parsers() -> dict[str, _ShellArgParser]:
     p.add_argument("--since", default="15m")
     p.add_argument("--status", default=None)
     p.add_argument("--stage", type=int, default=None)
+    p.add_argument("--account", default=None)
     p.add_argument("--follow", action="store_true")
     p.add_argument("--interval", type=float, default=5.0)
     p.add_argument("--summary", action="store_true")
@@ -266,6 +269,7 @@ class ConciergeShell(cmd.Cmd):
             since=args.since,
             status=args.status,
             stage=args.stage,
+            account=args.account,
             follow=args.follow,
             interval=args.interval,
             summary=args.summary,
@@ -358,9 +362,20 @@ class ConciergeShell(cmd.Cmd):
                     WHERE processed_at > datetime('now', '-1 day')
                  GROUP BY status"""
             ).fetchall()
+            by_account = conn.execute(
+                """SELECT COALESCE(account, '(unset)') AS account,
+                          COUNT(*) AS c,
+                          MAX(processed_at) AS last_at
+                     FROM processed_messages
+                 GROUP BY account
+                 ORDER BY account"""
+            ).fetchall()
         finally:
             conn.close()
         self.stdout.write(f"listener:           {'RUNNING' if alive else 'STOPPED'}\n")
+        self.stdout.write(
+            f"configured accounts: {', '.join(a.name for a in cfg.accounts)}\n"
+        )
         self.stdout.write(f"db:                 {cfg.db_path}\n")
         self.stdout.write(f"processed_messages: {total} rows total\n")
         self.stdout.write(f"last processed:     {last or '(none)'}\n")
@@ -368,6 +383,13 @@ class ConciergeShell(cmd.Cmd):
             self.stdout.write("last 24h by status:\n")
             for row in by_status:
                 self.stdout.write(f"  {row['status']:16s} {row['c']:5d}\n")
+        if by_account:
+            self.stdout.write("by account (all time):\n")
+            for row in by_account:
+                self.stdout.write(
+                    f"  {row['account']:24s} {row['c']:5d}  last: "
+                    f"{row['last_at'] or '(none)'}\n"
+                )
         return False
 
     def do_listener(self, line: str) -> bool:

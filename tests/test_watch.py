@@ -24,6 +24,7 @@ def _seed(
     error: str | None = None,
     processed_at: datetime | None = None,
     received_at: datetime | None = None,
+    account: str | None = None,
 ) -> None:
     now = datetime.now(tz=UTC)
     received = (received_at or now).isoformat()
@@ -33,12 +34,12 @@ def _seed(
         INSERT OR REPLACE INTO processed_messages
           (message_id, received_at, sender, subject,
            handled_by_stage, handled_by_name, confidence,
-           status, error, processed_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           status, error, processed_at, account)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             message_id, received, sender, subject,
-            stage, name, confidence, status, error, processed,
+            stage, name, confidence, status, error, processed, account,
         ),
     )
     conn.commit()
@@ -223,6 +224,80 @@ def test_watch_show_ids_appends_message_id(tmp_db):
     )
     out_ids = _run(tmp_db, since="15m", show_ids=True)
     assert "id=<CAF=abc123@mail.example.com>" in out_ids
+
+
+def test_watch_account_filter(tmp_db):
+    """--account restricts rows to a single configured mailbox."""
+    now = datetime.now(tz=UTC)
+    _seed(
+        tmp_db, message_id="<p1@x>", status="processed",
+        sender="s@x", subject="Personal row",
+        processed_at=now - timedelta(minutes=1),
+        account="personal",
+    )
+    _seed(
+        tmp_db, message_id="<g1@x>", status="processed",
+        sender="s@x", subject="Gmail row",
+        processed_at=now - timedelta(minutes=1),
+        account="gmail",
+    )
+    out = _run(tmp_db, since="15m", account="personal")
+    assert "Personal row" in out
+    assert "Gmail row" not in out
+
+
+def test_watch_auto_prefixes_account_when_mixed(tmp_db):
+    """Without --account, a window spanning multiple accounts prefixes
+    each row with the account name so output stays disambiguated."""
+    now = datetime.now(tz=UTC)
+    _seed(
+        tmp_db, message_id="<p1@x>", status="processed",
+        subject="Personal row",
+        processed_at=now - timedelta(minutes=2),
+        account="personal",
+    )
+    _seed(
+        tmp_db, message_id="<g1@x>", status="processed",
+        subject="Gmail row",
+        processed_at=now - timedelta(minutes=1),
+        account="gmail",
+    )
+    out = _run(tmp_db, since="15m")
+    assert "[personal" in out
+    assert "[gmail" in out
+
+
+def test_watch_no_prefix_for_single_account_window(tmp_db):
+    """When only one account appears, skip the account prefix."""
+    now = datetime.now(tz=UTC)
+    _seed(
+        tmp_db, message_id="<p1@x>", status="processed",
+        subject="Lonely row",
+        processed_at=now - timedelta(minutes=1),
+        account="personal",
+    )
+    out = _run(tmp_db, since="15m")
+    assert "[personal" not in out
+    assert "Lonely row" in out
+
+
+def test_watch_summary_by_account(tmp_db):
+    now = datetime.now(tz=UTC)
+    for i in range(2):
+        _seed(
+            tmp_db, message_id=f"<p{i}@x>", status="processed",
+            processed_at=now - timedelta(minutes=i + 1),
+            account="personal",
+        )
+    _seed(
+        tmp_db, message_id="<g0@x>", status="processed",
+        processed_at=now - timedelta(minutes=1),
+        account="gmail",
+    )
+    out = _run(tmp_db, since="15m", summary=True)
+    assert "By account:" in out
+    assert "personal" in out
+    assert "gmail" in out
 
 
 def test_watch_default_output_omits_message_id(tmp_db):

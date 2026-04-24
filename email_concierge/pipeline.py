@@ -27,6 +27,7 @@ def process_email(
     extractors: Iterable[Extractor],
     sink: Sink,
     source: str = "live",
+    account: str | None = None,
 ) -> str:
     """Process a single email end-to-end. Returns the final status string.
 
@@ -48,13 +49,15 @@ def process_email(
             message_id=email.message_id,
             sender=email.sender,
             source=source,
+            account=account,
         )
         _record_processed(
             conn, email, stage=None, name=None, confidence=None,
-            status="skipped_filter", error=None,
+            status="skipped_filter", error=None, account=account,
         )
         _record_training_example(
-            conn, email, label="neither", label_source="auto_filter", extracted=None,
+            conn, email, label="neither", label_source="auto_filter",
+            extracted=None, account=account,
         )
         return "skipped_filter"
 
@@ -95,6 +98,7 @@ def process_email(
                     confidence=result.confidence,
                     status="processed",
                     error=None,
+                    account=account,
                 )
                 sink.write(result, email.message_id)
                 status = "processed"
@@ -116,6 +120,7 @@ def process_email(
         confidence=result.confidence if result else None,
         status=status,
         error=error,
+        account=account,
     )
     _record_training_example(
         conn,
@@ -123,6 +128,7 @@ def process_email(
         label="event" if result else "neither",
         label_source="auto_rejected" if status == "rejected" else "auto",
         extracted=result.parsed.model_dump(mode="json") if result else None,
+        account=account,
     )
 
     log.info(
@@ -135,6 +141,7 @@ def process_email(
         name=result.handled_by_name if result else None,
         confidence=result.confidence if result else None,
         source=source,
+        account=account,
     )
     return status
 
@@ -211,14 +218,15 @@ def _record_processed(
     confidence: float | None,
     status: str,
     error: str | None,
+    account: str | None = None,
 ) -> None:
     conn.execute(
         """
         INSERT OR REPLACE INTO processed_messages
             (message_id, received_at, sender, subject,
              handled_by_stage, handled_by_name, confidence,
-             status, error, processed_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             status, error, processed_at, account)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             email.message_id,
@@ -231,6 +239,7 @@ def _record_processed(
             status,
             error,
             datetime.now(tz=UTC).isoformat(),
+            account,
         ),
     )
 
@@ -242,14 +251,15 @@ def _record_training_example(
     label: str,
     label_source: str,
     extracted: dict | None,
+    account: str | None = None,
 ) -> None:
     body_preview = (email.body_text or "")[:BODY_PREVIEW_LEN]
     conn.execute(
         """
         INSERT OR IGNORE INTO training_examples
             (message_id, sender, subject, body_preview,
-             label, label_source, extracted_json, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             label, label_source, extracted_json, created_at, account)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             email.message_id,
@@ -260,5 +270,6 @@ def _record_training_example(
             label_source,
             json.dumps(extracted) if extracted else None,
             datetime.now(tz=UTC).isoformat(),
+            account,
         ),
     )

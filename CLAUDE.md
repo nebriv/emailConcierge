@@ -36,7 +36,8 @@ The service should be:
 
 ### v1.0 — Email to Calendar (in scope)
 
-- IMAP IDLE listener for a single mailbox / single folder, read-only.
+- IMAP IDLE listener, read-only. One thread per configured account; single
+  folder per account (see section 4a on multi-account).
 - Four-stage extraction pipeline (detailed in section 6):
   1. Deterministic `.ics` attachment parser.
   2. Vendor plugin registry (auto-discovered Python modules with `can_handle` / `extract` methods).
@@ -55,7 +56,9 @@ The service should be:
 
 - Outbound email of any kind.
 - **Any IMAP operation that modifies server state.** See section 4.
-- Multi-user / multi-mailbox support.
+- Multi-user support (one SQLite file, one CalDAV calendar, one set of
+  trained models — but multiple mailboxes belonging to the *same* user
+  are supported; see section 4a).
 - A web UI for reviewing or approving extractions (CLI / logs only).
 - OAuth-based IMAP (XOAUTH2). App passwords only.
 - Calendar event editing, deletion, or two-way sync.
@@ -73,7 +76,9 @@ The service should be:
 - Fine-tuned small generative model (Qwen 0.5B-class) trained on bootstrapped labels for fully-local extraction.
 - Web UI.
 - Slack / Discord / ntfy notifications of newly-created events.
-- Multi-mailbox support.
+- Multi-*user* support (separate tenants with separate DBs / CalDAV
+  calendars / models). Multi-*mailbox* for a single user is already
+  shipped (section 4a).
 
 ---
 
@@ -183,6 +188,22 @@ The README must instruct the user to generate a dedicated app password for the s
 ### 4.3 What this looks like in logs
 
 Every IMAP command issued is logged at DEBUG level with the full command string (minus credentials). This is off by default in production but flip-on-able via `EMAIL_CONCIERGE_LOG_LEVEL=DEBUG` for troubleshooting. Makes it trivially verifiable that the service is only ever issuing read operations.
+
+---
+
+## 4a. Multi-account (one user, several mailboxes)
+
+The v1.0 scope originally called for a single mailbox; shipped behavior is now *N mailboxes belonging to the same user*. Two users with two inboxes is still out of scope — the DB, CalDAV calendar, and trained models are all shared. "Multi-account" here means "one person, their personal IMAP *and* their Gmail," not "SaaS tenancy."
+
+**Configuration.** Either leave the legacy `EMAIL_CONCIERGE_IMAP_*` env vars set (one account) or set `EMAIL_CONCIERGE_ACCOUNTS` to a JSON array of `{name, host, port, username, password, folder, use_ssl}` objects. When the JSON var is set, the legacy fields are ignored. `name` is a short stable identifier tagged onto every DB row — keep it under ~16 chars. Names must be unique per array.
+
+**Runtime.** `listener.run_all_accounts` spawns one daemon thread per account. Each thread owns its own `ReadOnlyMailbox` and its own IMAP IDLE session; they share the SQLite connection (WAL mode makes multi-writer safe) and the single `CaldavSink`. Resume cursor is per-account: `MAX(received_at) WHERE account = ?`. Only the first account in the list runs the CalDAV feedback scan so we don't multiply-hit CalDAV.
+
+**Gmail caveat.** Gmail IMAP does not implement server-initiated IDLE notifications the way most servers do — `idle_wait` will block for the full 29-minute timeout and catch-up runs on the timeout cycle. That's fine for personal-inbox cadence but don't expect sub-second latency.
+
+**DB tagging.** `processed_messages.account` and `training_examples.account` are nullable TEXT columns added via an idempotent `PRAGMA table_info` + `ALTER TABLE ADD COLUMN` migration (not a migration framework — just a guarded one-shot). Legacy rows predating multi-account remain NULL and are preserved unchanged.
+
+**Why not one DB per account.** Cross-account dedup matters (both inboxes may CC you on a booking) and the trained classifier should see the union of examples, not N partitions. Tagging rather than partitioning is the right call.
 
 ---
 

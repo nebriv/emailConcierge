@@ -18,7 +18,7 @@ def run_command() -> int:
     log.info(
         "starting",
         dry_run=cfg.dry_run,
-        folder=cfg.imap_folder,
+        accounts=[a.name for a in cfg.accounts],
         disable_llm=cfg.disable_llm,
     )
 
@@ -36,7 +36,7 @@ def run_command() -> int:
     sink = CaldavSink(conn)
 
     try:
-        listener.run(extractors, sink, conn)
+        listener.run_all_accounts(extractors, sink, conn)
     finally:
         conn.close()
 

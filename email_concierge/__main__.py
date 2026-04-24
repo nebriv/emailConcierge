@@ -62,6 +62,14 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Write extracted events to CalDAV (off by default — training rows only)",
     )
+    bf.add_argument(
+        "--account",
+        default=None,
+        help=(
+            "Which configured account to backfill (name from "
+            "EMAIL_CONCIERGE_ACCOUNTS). Default: the first account."
+        ),
+    )
 
     tr = sub.add_parser("train", help="Fit the Stage 3 event classifier from training_examples")
     tr.add_argument(
@@ -158,6 +166,15 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         default=None,
         help="Filter by handled_by_stage (1-4).",
+    )
+    wt.add_argument(
+        "--account",
+        default=None,
+        help=(
+            "Filter by configured account name (EMAIL_CONCIERGE_ACCOUNTS[i].name). "
+            "Omit to see all accounts; column is auto-added when the window "
+            "spans more than one."
+        ),
     )
     wt.add_argument(
         "--follow",
@@ -303,6 +320,7 @@ def main(argv: list[str] | None = None) -> int:
             since=args.since,
             max_messages=args.max_messages,
             write_to_caldav=args.write_to_caldav,
+            account=args.account,
         )
 
     if args.command == "train":
@@ -341,6 +359,7 @@ def main(argv: list[str] | None = None) -> int:
             since=args.since,
             status=args.status,
             stage=args.stage,
+            account=args.account,
             follow=args.follow,
             interval=args.interval,
             summary=args.summary,

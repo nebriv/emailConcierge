@@ -14,13 +14,16 @@ CREATE TABLE IF NOT EXISTS processed_messages (
     confidence          REAL,
     status              TEXT NOT NULL,
     error               TEXT,
-    processed_at        TEXT NOT NULL
+    processed_at        TEXT NOT NULL,
+    account             TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_pm_handled_by
     ON processed_messages(handled_by_stage, handled_by_name);
 CREATE INDEX IF NOT EXISTS idx_pm_received
     ON processed_messages(received_at);
+CREATE INDEX IF NOT EXISTS idx_pm_account
+    ON processed_messages(account);
 
 CREATE TABLE IF NOT EXISTS calendar_events (
     ical_uid            TEXT PRIMARY KEY,
@@ -43,10 +46,12 @@ CREATE TABLE IF NOT EXISTS training_examples (
     label_source        TEXT,
     extracted_json      TEXT,
     created_at          TEXT NOT NULL,
+    account             TEXT,
     FOREIGN KEY (message_id) REFERENCES processed_messages(message_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_te_label ON training_examples(label);
+CREATE INDEX IF NOT EXISTS idx_te_account ON training_examples(account);
 
 CREATE TABLE IF NOT EXISTS model_versions (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -93,4 +98,36 @@ def connect(path: Path | str) -> sqlite3.Connection:
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
+    # Migrate legacy tables before running the full schema script: older
+    # DBs lack the `account` column, so the CREATE INDEX on that column
+    # inside SCHEMA would fail. Ensuring the column exists first makes
+    # the subsequent executescript safe on both fresh and legacy DBs.
+    existing_tables = {
+        row["name"]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    if "processed_messages" in existing_tables:
+        _ensure_column(conn, "processed_messages", "account", "TEXT")
+    if "training_examples" in existing_tables:
+        _ensure_column(conn, "training_examples", "account", "TEXT")
     conn.executescript(SCHEMA)
+
+
+def _ensure_column(
+    conn: sqlite3.Connection,
+    table: str,
+    column: str,
+    column_type: str,
+) -> None:
+    """Add `column` to `table` if missing. Idempotent; safe to call on
+    fresh DBs (no-op since CREATE TABLE above already includes the
+    column) and on older DBs created before the column was added.
+
+    Not a migration framework — just an ADD COLUMN guarded by a PRAGMA
+    check, which is the simplest backwards-compatible schema evolution
+    for a column that's nullable.
+    """
+    existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column in existing:
+        return
+    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")

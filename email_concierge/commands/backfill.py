@@ -15,7 +15,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from email_concierge import db
-from email_concierge.config import settings
+from email_concierge.config import Account, settings
 from email_concierge.extractors.base import Extractor
 from email_concierge.extractors.discovery import discover_plugins
 from email_concierge.extractors.ics import IcsExtractor
@@ -50,6 +50,7 @@ def backfill_command(
     since: datetime | None = None,
     max_messages: int | None = None,
     write_to_caldav: bool = False,
+    account: str | None = None,
 ) -> int:
     """Run the live pipeline over a historical IMAP folder.
 
@@ -67,6 +68,8 @@ def backfill_command(
     cfg = settings()
     conn = db.connect(cfg.db_path)
     db.init_schema(conn)
+
+    acct = _resolve_account(cfg, account)
 
     if since is None:
         since = datetime.now(tz=UTC) - timedelta(days=365 * 2)
@@ -89,6 +92,7 @@ def backfill_command(
     criteria = _since_criteria(since)
     log.info(
         "backfill_started",
+        account=acct.name,
         folder=folder,
         since=since.isoformat(),
         criteria=criteria,
@@ -111,11 +115,13 @@ def backfill_command(
     n_processed = 0
     n_dedup = 0
     try:
-        with _open_mailbox(cfg) as mb:
+        with _open_mailbox(acct) as mb:
             mb.examine(folder)
             for email in mb.fetch(criteria=criteria):
                 n_seen += 1
-                status = process_email(email, conn, extractors, sink, source="backfill")
+                status = process_email(
+                    email, conn, extractors, sink, source="backfill", account=acct.name
+                )
                 if status == "skipped_dedup":
                     n_dedup += 1
                 else:
@@ -126,6 +132,7 @@ def backfill_command(
     finally:
         log.info(
             "backfill_done",
+            account=acct.name,
             seen=n_seen,
             processed=n_processed,
             skipped_dedup=n_dedup,
@@ -134,13 +141,26 @@ def backfill_command(
     return 0
 
 
-def _open_mailbox(cfg) -> ReadOnlyMailbox:  # type: ignore[no-untyped-def]
+def _resolve_account(cfg, name: str | None) -> Account:  # type: ignore[no-untyped-def]
+    accounts = cfg.accounts
+    if name is None:
+        return accounts[0]
+    for a in accounts:
+        if a.name == name:
+            return a
+    raise ValueError(
+        f"account {name!r} not found; configured accounts: "
+        f"{[a.name for a in accounts]}"
+    )
+
+
+def _open_mailbox(acct: Account) -> ReadOnlyMailbox:
     return ReadOnlyMailbox(
-        host=cfg.imap_host,
-        port=cfg.imap_port,
-        username=cfg.imap_username,
-        password=cfg.imap_password,
-        use_ssl=cfg.imap_use_ssl,
+        host=acct.host,
+        port=acct.port,
+        username=acct.username,
+        password=acct.password,
+        use_ssl=acct.use_ssl,
     )
 
 

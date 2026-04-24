@@ -46,6 +46,7 @@ def watch_command(
     since: str = "15m",
     status: str | None = None,
     stage: int | None = None,
+    account: str | None = None,
     follow: bool = False,
     interval: float = 5.0,
     summary: bool = False,
@@ -75,11 +76,14 @@ def watch_command(
 
     try:
         if summary:
-            _print_summary(conn, cutoff, status=status, stage=stage, out=out)
+            _print_summary(
+                conn, cutoff, status=status, stage=stage, account=account, out=out,
+            )
             return 0
 
         last_seen = _print_rows(
-            conn, cutoff, status=status, stage=stage, out=out, show_ids=show_ids,
+            conn, cutoff, status=status, stage=stage, account=account,
+            out=out, show_ids=show_ids,
         )
         if not follow:
             return 0
@@ -87,7 +91,8 @@ def watch_command(
         while True:
             time.sleep(interval)
             last_seen = _print_rows(
-                conn, last_seen, status=status, stage=stage, out=out, show_ids=show_ids,
+                conn, last_seen, status=status, stage=stage, account=account,
+                out=out, show_ids=show_ids,
             )
     except KeyboardInterrupt:
         return 0
@@ -130,6 +135,7 @@ def _print_rows(
     *,
     status: str | None,
     stage: int | None,
+    account: str | None,
     out: TextIO,
     show_ids: bool = False,
 ) -> datetime:
@@ -139,11 +145,16 @@ def _print_rows(
     next call yields strictly new rows. If no rows were fetched, the cutoff
     is unchanged.
     """
-    rows = _fetch_rows(conn, cutoff, status=status, stage=stage)
+    rows = _fetch_rows(conn, cutoff, status=status, stage=stage, account=account)
     if not rows:
         return cutoff
+    # Prefix each line with account name when a mixed set could appear
+    # (no --account filter, multiple accounts visible in the window).
+    show_account = account is None and _window_has_multiple_accounts(rows)
     for row in rows:
-        out.write(_format_row(row, show_id=show_ids) + "\n")
+        out.write(
+            _format_row(row, show_id=show_ids, show_account=show_account) + "\n"
+        )
     out.flush()
     # `processed_at` is ISO-8601 UTC — comparable as-is.
     new_cutoff = max(_parse_ts(r["processed_at"]) for r in rows)
@@ -156,10 +167,11 @@ def _fetch_rows(
     *,
     status: str | None,
     stage: int | None,
+    account: str | None,
 ) -> list[sqlite3.Row]:
     sql = [
         "SELECT message_id, received_at, sender, subject, handled_by_stage,",
-        "       handled_by_name, confidence, status, error, processed_at",
+        "       handled_by_name, confidence, status, error, processed_at, account",
         "  FROM processed_messages",
         " WHERE processed_at > ?",
     ]
@@ -170,8 +182,20 @@ def _fetch_rows(
     if stage is not None:
         sql.append(" AND handled_by_stage = ?")
         args.append(stage)
+    if account is not None:
+        sql.append(" AND account = ?")
+        args.append(account)
     sql.append(" ORDER BY processed_at ASC")
     return conn.execute("\n".join(sql), args).fetchall()
+
+
+def _window_has_multiple_accounts(rows: list[sqlite3.Row]) -> bool:
+    seen: set[str | None] = set()
+    for r in rows:
+        seen.add(r["account"])
+        if len(seen) > 1:
+            return True
+    return False
 
 
 def _print_summary(
@@ -180,9 +204,10 @@ def _print_summary(
     *,
     status: str | None,
     stage: int | None,
+    account: str | None,
     out: TextIO,
 ) -> None:
-    rows = _fetch_rows(conn, cutoff, status=status, stage=stage)
+    rows = _fetch_rows(conn, cutoff, status=status, stage=stage, account=account)
     total = len(rows)
     out.write(f"Window: since {cutoff.isoformat()}  total={total}\n")
     if total == 0:
@@ -214,10 +239,21 @@ def _print_summary(
             stg_str = f"stage {stg}" if stg is not None else "(no stage)"
             out.write(f"  {stg_str:10s} {name:24s} {n:5d}\n")
 
+    # Per-account breakdown: only print when more than one account appears
+    # in the window — otherwise it's just noise for single-mailbox users.
+    accounts = Counter((r["account"] or "(unset)") for r in rows)
+    if len(accounts) > 1:
+        out.write("By account:\n")
+        for acct, n in accounts.most_common():
+            pct = 100 * n / total
+            out.write(f"  {acct:24s} {n:5d}  {pct:5.1f}%\n")
+
     out.flush()
 
 
-def _format_row(row: sqlite3.Row, *, show_id: bool = False) -> str:
+def _format_row(
+    row: sqlite3.Row, *, show_id: bool = False, show_account: bool = False,
+) -> str:
     ts = _parse_ts(row["processed_at"]).astimezone().strftime("%H:%M:%S")
     label = _STATUS_LABEL.get(row["status"], row["status"][:4].upper())
     stage = row["handled_by_stage"]
@@ -227,7 +263,11 @@ def _format_row(row: sqlite3.Row, *, show_id: bool = False) -> str:
     conf_str = f"{conf:.2f}" if conf is not None else "-   "
     sender = _truncate(row["sender"] or "", 28)
     subject = _truncate(row["subject"] or "", 50)
-    line = f"{ts} {label} {stage_str} {name:18s} {conf_str:4s} {sender:28s} {subject}"
+    prefix = ""
+    if show_account:
+        acct = _truncate(row["account"] or "-", 10)
+        prefix = f"[{acct:10s}] "
+    line = f"{prefix}{ts} {label} {stage_str} {name:18s} {conf_str:4s} {sender:28s} {subject}"
     if show_id:
         # Unwrapped — full Message-ID, so operators can copy-paste into
         # `mark-event` / `forget` / `label` without guessing at truncation.
