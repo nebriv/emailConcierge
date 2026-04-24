@@ -58,6 +58,12 @@ CREATE TABLE IF NOT EXISTS model_versions (
     trained_at          TEXT NOT NULL,
     is_active           INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS google_sync_state (
+    kind                TEXT PRIMARY KEY,
+    cursor              TEXT,
+    last_synced_at      TEXT NOT NULL
+);
 """
 
 

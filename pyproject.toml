@@ -20,6 +20,9 @@ dependencies = [
     "structlog>=24.1",
     "selectolax>=0.3",
     "tzdata>=2024.1",
+    "google-auth>=2.28",
+    "google-auth-oauthlib>=1.2",
+    "google-api-python-client>=2.120",
 ]
 
 [project.optional-dependencies]
@@ -53,9 +56,24 @@ ban-relative-imports = "all"
 "imap_tools".msg = "IMAP access must go through email_concierge.imap_readonly. Import from there instead."
 "imap_tools.mailbox".msg = "IMAP access must go through email_concierge.imap_readonly."
 "imap_tools.query".msg = "IMAP access must go through email_concierge.imap_readonly."
+"googleapiclient".msg = "Google API access must go through email_concierge.integrations.google.*"
+"googleapiclient.discovery".msg = "Google API access must go through email_concierge.integrations.google.*"
+"googleapiclient.errors".msg = "Google API access must go through email_concierge.integrations.google.*"
+"google_auth_oauthlib".msg = "Google auth must go through email_concierge.integrations.google.auth."
+"google_auth_oauthlib.flow".msg = "Google auth must go through email_concierge.integrations.google.auth."
+"google.oauth2".msg = "Google auth must go through email_concierge.integrations.google.auth."
+"google.oauth2.credentials".msg = "Google auth must go through email_concierge.integrations.google.auth."
+"google.auth.transport.requests".msg = "Google auth must go through email_concierge.integrations.google.auth."
 
 [tool.ruff.lint.per-file-ignores]
 "email_concierge/imap_readonly.py" = ["TID251"]
+"email_concierge/integrations/google/auth.py" = ["TID251"]
+"email_concierge/integrations/google/calendar.py" = ["TID251"]
+"email_concierge/integrations/google/gmail.py" = ["TID251"]
+"tests/test_google_auth.py" = ["TID251"]
+"tests/test_google_calendar.py" = ["TID251"]
+"tests/test_google_gmail.py" = ["TID251"]
+"tests/test_import_training.py" = ["TID251"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

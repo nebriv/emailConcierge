@@ -3,6 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -66,6 +67,21 @@ class Settings(BaseSettings):
     # Storage
     db_path: Path = Path("/data/email-concierge.db")
     models_dir: Path = Path("/data/models")
+
+    # Google integration (Phase 2.5 — training-data import only, read-only scopes)
+    # Either supply the OAuth client JSON inline as an env var or as a file path.
+    # JSON takes precedence. The env var accepts two names so users can pick a
+    # shorter one outside the EMAIL_CONCIERGE_ prefix if preferred.
+    google_client_secrets_json: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "EMAIL_CONCIERGE_GOOGLE_CLIENT_SECRETS_JSON",
+            "GOOGLE_CALENDAR_OAUTH_JSON",
+        ),
+    )
+    google_client_secrets_path: Path = Path("/data/google_client_secrets.json")
+    google_token_path: Path = Path("/data/google_token.json")
+    google_calendar_id: str = "primary"
 
     # Logging
     log_level: str = "INFO"

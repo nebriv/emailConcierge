@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from email_concierge import db, listener
 from email_concierge.config import settings
+from email_concierge.extractors.base import Extractor
+from email_concierge.extractors.discovery import discover_plugins
 from email_concierge.extractors.ics import IcsExtractor
 from email_concierge.extractors.llm import LlmExtractor
 from email_concierge.log import get_logger
@@ -22,9 +24,9 @@ def run_command() -> int:
     conn = db.connect(cfg.db_path)
     db.init_schema(conn)
 
-    # Phase 1: hard-coded extractor list. Phase 2 swaps this for
-    # discover_plugins() + [IcsExtractor(), LlmExtractor()].
-    extractors = [IcsExtractor(), LlmExtractor()]
+    plugins = discover_plugins()
+    log.info("plugins_loaded", names=[p.name for p in plugins])
+    extractors: list[Extractor] = [IcsExtractor(), *plugins, LlmExtractor()]
     sink = CaldavSink(conn)
 
     try:

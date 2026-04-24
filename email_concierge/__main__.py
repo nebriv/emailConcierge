@@ -2,9 +2,17 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import UTC, datetime
 
 from email_concierge import log as logmod
 from email_concierge.config import settings
+
+
+def _parse_date(s: str) -> datetime:
+    dt = datetime.fromisoformat(s)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -18,6 +26,29 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("metrics", help="(not implemented in this phase)")
     sub.add_parser("export-fixtures", help="(not implemented in this phase)")
 
+    imp = sub.add_parser(
+        "import-training",
+        help="Import labeled (email, event) pairs from external sources",
+    )
+    imp.add_argument(
+        "--from-google",
+        action="store_true",
+        required=True,
+        help="Pull auto-extracted Google Calendar events + source Gmail messages",
+    )
+    imp.add_argument(
+        "--since",
+        type=_parse_date,
+        default=None,
+        help="Only import events starting after this ISO date (default: 2 years ago)",
+    )
+    imp.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Stop after N paired rows have been written",
+    )
+
     args = parser.parse_args(argv)
 
     cfg = settings()
@@ -27,6 +58,15 @@ def main(argv: list[str] | None = None) -> int:
         from email_concierge.commands.run import run_command
 
         return run_command()
+
+    if args.command == "import-training":
+        from email_concierge.commands.import_training import import_training_command
+
+        return import_training_command(
+            source="google",
+            since=args.since,
+            limit=args.limit,
+        )
 
     not_yet = {"backfill", "train", "evaluate", "metrics", "export-fixtures"}
     if args.command in not_yet:
