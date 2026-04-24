@@ -1,0 +1,64 @@
+# Production compose — intended for Arcane / Portainer-style stack
+# deployments. Differences from docker-compose.yaml:
+#
+#   1. Pulls a published image rather than building from source.
+#   2. Uses a named volume for /data instead of a bind mount, so state
+#      survives container recreates regardless of the host's filesystem
+#      layout. Back it up with `docker run --rm -v
+#      email_concierge_data:/data -v $(pwd):/backup alpine tar czf
+#      /backup/email-concierge-$(date +%F).tgz -C /data .`
+#   3. No `container_name` — Arcane/Compose derive one from the stack
+#      name, which keeps multiple deployments on one host separable.
+#
+# Configuration: provide env vars either via the Arcane stack UI (the
+# usual prod path) or by dropping a .env alongside this file. The
+# env_file directive is harmless when the file is absent.
+#
+# Required env (see .env.example for the full list):
+#   EMAIL_CONCIERGE_ACCOUNT_1 … ACCOUNT_N  (IMAP URLs, one per mailbox)
+#   EMAIL_CONCIERGE_CALDAV_URL / _USERNAME / _PASSWORD / _CALENDAR
+#   EMAIL_CONCIERGE_LLM_BASE_URL / _API_KEY / _MODEL  (any OpenAI-compatible endpoint)
+#   EMAIL_CONCIERGE_USER_TIMEZONE
+#
+# Default tracks `:main` (rebuilt on every push to main by
+# .github/workflows/docker.yml). Override EMAIL_CONCIERGE_IMAGE in the
+# stack env to pin a release, e.g. `…:0.1`.
+
+services:
+  email-concierge:
+    image: ${EMAIL_CONCIERGE_IMAGE:-ghcr.io/nebriv/emailconcierge:main}
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+
+    # Container-local paths — take precedence over anything in .env so a
+    # dev-shaped EMAIL_CONCIERGE_DB_PATH=./data/... copied into prod
+    # can't escape /data (the only writable mount for the concierge
+    # user inside the image).
+    environment:
+      EMAIL_CONCIERGE_DB_PATH: /data/email-concierge.db
+      EMAIL_CONCIERGE_MODELS_DIR: /data/models
+      EMAIL_CONCIERGE_LOG_JSON: "true"
+
+    volumes:
+      - email_concierge_data:/data
+
+    # Keep stdin + TTY so Arcane's "Console" / `docker attach` drops
+    # into the interactive REPL. Without them the image's shell command
+    # detects no-TTY and falls back to a foreground listener — still
+    # useful, just not interactive.
+    tty: true
+    stdin_open: true
+
+    # Basic log rotation so a misconfigured LLM endpoint that loops on
+    # errors doesn't fill the host disk.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  email_concierge_data:
+    name: email_concierge_data
