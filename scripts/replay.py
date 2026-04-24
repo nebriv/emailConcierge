@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from email_concierge import db  # noqa: E402
 from email_concierge import log as logmod
+from email_concierge.extractors.discovery import discover_plugins  # noqa: E402
 from email_concierge.extractors.ics import IcsExtractor  # noqa: E402
 from email_concierge.extractors.llm import LlmExtractor  # noqa: E402
 from email_concierge.models import Attachment, Email  # noqa: E402
@@ -52,7 +53,9 @@ def main() -> int:
         file=sys.stderr,
     )
 
-    extractors = [IcsExtractor()]
+    plugins = discover_plugins()
+    print(f"[replay] plugins: {[p.name for p in plugins]}", file=sys.stderr)
+    extractors = [IcsExtractor(), *plugins]
     if not args.disable_llm:
         try:
             extractors.append(LlmExtractor())

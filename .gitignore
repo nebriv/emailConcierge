@@ -12,6 +12,9 @@ env/
 build/
 dist/
 data/
+training/*
+!training/.gitkeep
+!training/README.md
 *.db
 *.sqlite
 .env
