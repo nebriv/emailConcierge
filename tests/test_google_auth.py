@@ -314,7 +314,10 @@ class TestSettingsAliasesAndWrapper:
         client_secrets.write_text(json.dumps(FAKE_CLIENT_CONFIG))
         token_path = tmp_path / "token.json"
 
+        # _env_file=None skips .env so a user-local .env that defines
+        # GOOGLE_CALENDAR_OAUTH_JSON doesn't leak into this test.
         cfg = Settings(
+            _env_file=None,
             google_client_secrets_path=client_secrets,
             google_token_path=token_path,
         )
