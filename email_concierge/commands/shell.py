@@ -207,11 +207,14 @@ class ConciergeShell(cmd.Cmd):
         if not self._listener_thread:
             return
         self._stop_event.set()
-        self._listener_thread.join(timeout=10)
-        if self._listener_thread.is_alive():
-            # IDLE timeout can be up to 29min; we use daemon=True so it
-            # dies with the process. 10s wait is a courtesy, not required.
-            pass
+        # Short join is intentional: the listener is typically blocked
+        # in IMAP IDLE (up to 29 min), and idle_wait doesn't poll
+        # stop_event until the current cycle returns. daemon=True means
+        # the thread dies with the process anyway — we only wait briefly
+        # in case the listener happens to be between cycles and can
+        # finish cleanly. SQLite WAL is crash-safe, so nothing is lost
+        # if the thread is killed mid-IDLE.
+        self._listener_thread.join(timeout=1.0)
         self._listener_thread = None
 
     # ---- dispatch shims --------------------------------------------
