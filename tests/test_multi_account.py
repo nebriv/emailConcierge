@@ -17,14 +17,25 @@ from email_concierge.config import Account, Settings
 from email_concierge.pipeline import process_email
 
 
-def _clear_account_env(monkeypatch) -> None:
-    """Drop any EMAIL_CONCIERGE_ACCOUNT_<N> env vars the real shell may
-    have exported — tests must not accidentally inherit the dev's
-    personal credentials from .env."""
+def _clear_account_env(monkeypatch, tmp_path=None) -> None:
+    """Isolate tests from the dev's real config:
+      1. drop any EMAIL_CONCIERGE_ACCOUNT_<N> env vars currently set,
+      2. chdir to a fresh temp dir so _read_indexed_env can't pick up
+         the repo's real .env (which has the dev's personal accounts).
+    """
     import os
     for key in list(os.environ):
         if key.startswith("EMAIL_CONCIERGE_ACCOUNT_"):
             monkeypatch.delenv(key, raising=False)
+    if tmp_path is not None:
+        monkeypatch.chdir(tmp_path)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_env(monkeypatch, tmp_path):
+    """Every test in this module runs with a clean ACCOUNT_* env and in
+    a directory with no .env — keeps the dev's real creds from leaking in."""
+    _clear_account_env(monkeypatch, tmp_path)
 
 
 def test_accounts_defaults_to_single_legacy_from_imap_env(monkeypatch):
@@ -102,7 +113,8 @@ def test_accounts_url_form_empty_path_defaults_to_inbox(monkeypatch):
 
 
 def test_accounts_url_form_url_encoded_password(monkeypatch):
-    """Passwords with @, :, /, or # must be percent-encoded in the URL."""
+    """Percent-encoded forms still work (RFC-strict users, copy-paste
+    from older examples). Kept so we don't regress on strict encoders."""
     _clear_account_env(monkeypatch)
     # password is "p@ss:w/rd#1"
     encoded = "p%40ss%3Aw%2Frd%231"
@@ -112,6 +124,52 @@ def test_accounts_url_form_url_encoded_password(monkeypatch):
     )
     s = Settings(_env_file=None)  # type: ignore[call-arg]
     assert s.accounts[0].password == "p@ss:w/rd#1"
+
+
+def test_accounts_url_form_unencoded_at_in_username(monkeypatch):
+    """Email-address usernames should not require percent-encoding the '@'.
+    Parser uses rightmost '@' as the user/host separator so this is safe."""
+    _clear_account_env(monkeypatch)
+    monkeypatch.setenv(
+        "EMAIL_CONCIERGE_ACCOUNT_1",
+        "imaps://contact@nebriv.com:plainpw@mail.nebriv.com/INBOX#nebriv",
+    )
+    s = Settings(_env_file=None)  # type: ignore[call-arg]
+    a = s.accounts[0]
+    assert a.username == "contact@nebriv.com"
+    assert a.password == "plainpw"
+    assert a.host == "mail.nebriv.com"
+
+
+def test_accounts_url_form_unencoded_at_in_password(monkeypatch):
+    """Passwords containing '@' (a common PW-generator output) should not
+    require percent-encoding — rightmost '@' delimits the host."""
+    _clear_account_env(monkeypatch)
+    monkeypatch.setenv(
+        "EMAIL_CONCIERGE_ACCOUNT_1",
+        "imaps://contact@nebriv.com:Hbw]u@^=Dz~g@mail.nebriv.com/INBOX#nebriv",
+    )
+    s = Settings(_env_file=None)  # type: ignore[call-arg]
+    a = s.accounts[0]
+    assert a.username == "contact@nebriv.com"
+    assert a.password == "Hbw]u@^=Dz~g"
+    assert a.host == "mail.nebriv.com"
+
+
+def test_accounts_url_form_unencoded_hash_in_password(monkeypatch):
+    """Passwords with '#' work unencoded as long as the required '#name'
+    fragment is still present — rightmost '#' wins for the name split."""
+    _clear_account_env(monkeypatch)
+    monkeypatch.setenv(
+        "EMAIL_CONCIERGE_ACCOUNT_1",
+        "imaps://ben@benvirgilio.com:BCbo#PaA6Mwy@mail.benvirgilio.com/INBOX#benv",
+    )
+    s = Settings(_env_file=None)  # type: ignore[call-arg]
+    a = s.accounts[0]
+    assert a.username == "ben@benvirgilio.com"
+    assert a.password == "BCbo#PaA6Mwy"
+    assert a.host == "mail.benvirgilio.com"
+    assert a.name == "benv"
 
 
 def test_accounts_url_form_nested_folder_preserved(monkeypatch):

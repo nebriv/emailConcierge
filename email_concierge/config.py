@@ -4,7 +4,7 @@ import os
 import re
 from functools import lru_cache
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote
 
 from dotenv import dotenv_values
 from pydantic import AliasChoices, BaseModel, Field
@@ -250,43 +250,98 @@ def _read_indexed_env(prefix: str) -> list[tuple[str, str]]:
     return [(key, value) for _, key, value in matches]
 
 
+_SCHEME_RE = re.compile(r"^(imaps?)://", re.IGNORECASE)
+
+
 def _parse_account_url(env_var: str, url: str) -> Account:
     """Parse one ``EMAIL_CONCIERGE_ACCOUNT_<N>`` URL into an Account.
 
-    See the `Settings.accounts` docstring for the grammar. Raises
-    ``ValueError`` with ``env_var`` in the message so misconfigured
+    See the `Settings.accounts` docstring for the grammar.
+
+    Unlike stdlib ``urlsplit``, this parser anchors on the *rightmost*
+    ``@`` before the path so unencoded ``@`` in the username (the
+    common case: email-address usernames) works without percent-encoding.
+    Same story for the ``#`` fragment — rightmost wins, so a password
+    containing ``#`` only needs encoding if the URL lacks a ``#name``.
+
+    Percent-encoded sequences are still honored (``unquote`` runs on
+    every piece), so RFC-strict URLs keep working.
+
+    Raises ``ValueError`` with ``env_var`` in the message so misconfigured
     users know exactly which variable to fix.
     """
-    parts = urlsplit(url.strip())
-    scheme = parts.scheme.lower()
-    if scheme == "imaps":
-        use_ssl, default_port = True, 993
-    elif scheme == "imap":
-        use_ssl, default_port = False, 143
-    else:
+    raw = url.strip()
+    m = _SCHEME_RE.match(raw)
+    if not m:
+        scheme_got = raw.split("://", 1)[0].lower() if "://" in raw else raw
         raise ValueError(
-            f"{env_var}: scheme must be 'imaps' or 'imap', got {scheme!r}"
+            f"{env_var}: scheme must be 'imaps' or 'imap', got {scheme_got!r}"
         )
+    scheme = m.group(1).lower()
+    use_ssl, default_port = (True, 993) if scheme == "imaps" else (False, 143)
+    rest = raw[m.end():]
 
-    if not parts.hostname:
-        raise ValueError(f"{env_var}: missing host")
-    if not parts.username:
-        raise ValueError(f"{env_var}: missing username")
-    if parts.password is None:
-        raise ValueError(f"{env_var}: missing password")
-    if not parts.fragment:
+    # Rightmost '#' separates the required name from the rest. A '#' in
+    # the password is fine as long as the URL also ends with '#<name>'.
+    if "#" not in rest:
+        raise ValueError(
+            f"{env_var}: missing account name — append '#<shortname>' to the URL"
+        )
+    rest, fragment = rest.rsplit("#", 1)
+    if not fragment:
         raise ValueError(
             f"{env_var}: missing account name — append '#<shortname>' to the URL"
         )
 
-    folder = parts.path.lstrip("/") or "INBOX"
+    # First '/' splits authority from folder. Folders may themselves
+    # contain '/' (nested mailboxes), so we don't further split them.
+    if "/" in rest:
+        authority, folder = rest.split("/", 1)
+    else:
+        authority, folder = rest, ""
+    folder = folder or "INBOX"
+
+    # Rightmost '@' in the authority splits userinfo from host[:port].
+    # This is the key difference vs. urlsplit: allows unencoded '@' in
+    # user (and password).
+    if "@" not in authority:
+        raise ValueError(
+            f"{env_var}: malformed URL — expected imaps://user:password@host/..."
+        )
+    userinfo, hostport = authority.rsplit("@", 1)
+
+    # First ':' in userinfo splits user from password. A password
+    # containing ':' is fine; a username containing ':' is not (would
+    # need encoding as %3A, but emails don't have colons).
+    if ":" not in userinfo:
+        raise ValueError(
+            f"{env_var}: missing password — expected imaps://user:password@host/..."
+        )
+    user, password = userinfo.split(":", 1)
+    if not user:
+        raise ValueError(f"{env_var}: missing username")
+
+    # host[:port] — split off port only if the trailing piece is all
+    # digits; otherwise the whole thing is the host.
+    if ":" in hostport:
+        host, port_str = hostport.rsplit(":", 1)
+        if not port_str.isdigit():
+            raise ValueError(
+                f"{env_var}: bad port {port_str!r} — must be a number"
+            )
+        port = int(port_str)
+    else:
+        host, port = hostport, default_port
+
+    if not host:
+        raise ValueError(f"{env_var}: missing host")
 
     return Account(
-        name=unquote(parts.fragment),
-        host=parts.hostname,
-        port=parts.port or default_port,
-        username=unquote(parts.username),
-        password=unquote(parts.password),
+        name=unquote(fragment),
+        host=host,
+        port=port,
+        username=unquote(user),
+        password=unquote(password),
         folder=unquote(folder),
         use_ssl=use_ssl,
     )
