@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_call:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Ruff check
+        run: ruff check .
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # The `ml` extras pull in torch (~1GB). Install them so tests that
+      # exercise Stage 3's graceful-degradation path still run correctly —
+      # if the graceful path is exercised only when ml is absent, CI would
+      # never cover the positive case. Keeping torch install-time cost in
+      # CI is worth it.
+      - name: Install dependencies
+        run: |
+          pip install -e ".[dev,ml]"
+
+      - name: Run tests
+        env:
+          # Tests default to dry-run so no real IMAP/CalDAV is touched.
+          EMAIL_CONCIERGE_DRY_RUN: "true"
+          # No LLM calls in CI.
+          EMAIL_CONCIERGE_DISABLE_LLM: "true"
+        run: pytest -q

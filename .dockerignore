@@ -1,5 +1,6 @@
 .git
 .gitignore
+.github
 __pycache__
 *.pyc
 *.pyo
@@ -19,5 +20,7 @@ data
 tests
 docs
 scripts
+training
 .claude
 CLAUDE.md
+*.egg-info

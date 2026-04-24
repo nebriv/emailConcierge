@@ -1,7 +1,10 @@
 services:
+  # Live listener — the long-running one. Starts on `docker compose up`.
   email-concierge:
-    build: .
-    image: email-concierge:local
+    # Pull the published image by default; flip to `build: .` (and comment
+    # the image line) if you want to iterate locally.
+    image: ${EMAIL_CONCIERGE_IMAGE:-ghcr.io/nebriv/emailconcierge:latest}
+    # build: .
     container_name: email-concierge
     restart: unless-stopped
     env_file: .env
@@ -11,3 +14,30 @@ services:
     # endpoint: a local/host-mode Ollama, RunPod serverless vLLM, OpenRouter,
     # etc. See README for the RunPod setup. No service dependency is declared
     # here because the LLM is often external to this compose file.
+
+  # Ad-hoc CLI. Starts only on `docker compose run --rm cli <subcommand>`.
+  # Shares the same image, data volume, and env as the listener so any of
+  # the operator subcommands see identical state:
+  #
+  #   docker compose run --rm cli watch --since=1h
+  #   docker compose run --rm cli watch --follow --ids
+  #   docker compose run --rm cli mark-event '<id@host>'
+  #   docker compose run --rm cli forget <uid> --delete-remote
+  #   docker compose run --rm cli label --message-id='<id>' --label=neither
+  #   docker compose run --rm cli train classifier --dry-run
+  #   docker compose run --rm cli evaluate --sample=200
+  #   docker compose run --rm cli feedback
+  #   docker compose run --rm cli backfill --folder=Archive --max=500
+  #
+  # `docker compose exec email-concierge python -m email_concierge <...>`
+  # also works and runs inside the already-live listener container —
+  # useful when you want to avoid spinning a second container.
+  cli:
+    image: ${EMAIL_CONCIERGE_IMAGE:-ghcr.io/nebriv/emailconcierge:latest}
+    profiles: ["cli"]
+    env_file: .env
+    volumes:
+      - ./data:/data
+    entrypoint: ["python", "-m", "email_concierge"]
+    # No default command — user must supply one on `compose run`.
+    command: ["--help"]
