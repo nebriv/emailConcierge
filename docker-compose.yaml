@@ -2,11 +2,18 @@ services:
   email-concierge:
     # Pull the published image by default; flip to `build: .` (and comment
     # the image line) if you want to iterate locally.
-    image: ${EMAIL_CONCIERGE_IMAGE:-ghcr.io/nebriv/emailconcierge:latest}
-    # build: .
+    #image: ${EMAIL_CONCIERGE_IMAGE:-ghcr.io/nebriv/emailconcierge:latest}
+    build: .
     container_name: email-concierge
     restart: unless-stopped
     env_file: .env
+    # Pin container-local paths. Takes precedence over .env so that a
+    # host-mode dev setup (where the repo root is the CWD and
+    # `./data/...` makes sense) doesn't bleed into the container (where
+    # CWD is /app and the `concierge` user can only write under /data).
+    environment:
+      EMAIL_CONCIERGE_DB_PATH: /data/email-concierge.db
+      EMAIL_CONCIERGE_MODELS_DIR: /data/models
     volumes:
       - ./data:/data
 
