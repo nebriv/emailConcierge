@@ -7,7 +7,6 @@ exercised by integration-style tests that run the listener loop.
 
 from __future__ import annotations
 
-import json
 import sqlite3
 
 import pytest
@@ -18,8 +17,18 @@ from email_concierge.config import Account, Settings
 from email_concierge.pipeline import process_email
 
 
+def _clear_account_env(monkeypatch) -> None:
+    """Drop any EMAIL_CONCIERGE_ACCOUNT_<N> env vars the real shell may
+    have exported — tests must not accidentally inherit the dev's
+    personal credentials from .env."""
+    import os
+    for key in list(os.environ):
+        if key.startswith("EMAIL_CONCIERGE_ACCOUNT_"):
+            monkeypatch.delenv(key, raising=False)
+
+
 def test_accounts_defaults_to_single_legacy_from_imap_env(monkeypatch):
-    monkeypatch.delenv("EMAIL_CONCIERGE_ACCOUNTS", raising=False)
+    _clear_account_env(monkeypatch)
     monkeypatch.setenv("EMAIL_CONCIERGE_IMAP_HOST", "mail.example.com")
     monkeypatch.setenv("EMAIL_CONCIERGE_IMAP_USERNAME", "ben@example.com")
     monkeypatch.setenv("EMAIL_CONCIERGE_IMAP_PASSWORD", "secret")
@@ -36,24 +45,15 @@ def test_accounts_defaults_to_single_legacy_from_imap_env(monkeypatch):
     assert accts[0].use_ssl is True
 
 
-def test_accounts_json_overrides_single_account(monkeypatch):
+def test_accounts_url_form_overrides_single_account(monkeypatch):
+    _clear_account_env(monkeypatch)
     monkeypatch.setenv(
-        "EMAIL_CONCIERGE_ACCOUNTS",
-        json.dumps([
-            {
-                "name": "personal",
-                "host": "mail.personal.com",
-                "username": "me@personal.com",
-                "password": "pw1",
-            },
-            {
-                "name": "gmail",
-                "host": "imap.gmail.com",
-                "username": "me@gmail.com",
-                "password": "pw2",
-                "folder": "INBOX",
-            },
-        ]),
+        "EMAIL_CONCIERGE_ACCOUNT_1",
+        "imaps://me%40personal.com:pw1@mail.personal.com/INBOX#personal",
+    )
+    monkeypatch.setenv(
+        "EMAIL_CONCIERGE_ACCOUNT_2",
+        "imaps://me%40gmail.com:pw2@imap.gmail.com/INBOX#gmail",
     )
     monkeypatch.setenv("EMAIL_CONCIERGE_IMAP_HOST", "ignored.example.com")
 
@@ -62,36 +62,143 @@ def test_accounts_json_overrides_single_account(monkeypatch):
 
     assert [a.name for a in accts] == ["personal", "gmail"]
     assert accts[0].host == "mail.personal.com"
+    assert accts[0].username == "me@personal.com"  # %40 decoded
+    assert accts[0].password == "pw1"
+    assert accts[0].port == 993  # imaps default
+    assert accts[0].use_ssl is True
     assert accts[1].host == "imap.gmail.com"
-    # Port default carries over.
-    assert accts[0].port == 993
 
 
-def test_accounts_rejects_malformed_json(monkeypatch):
-    monkeypatch.setenv("EMAIL_CONCIERGE_ACCOUNTS", "{not-json}")
-    s = Settings(_env_file=None)  # type: ignore[call-arg]
-    with pytest.raises(ValueError, match="not valid JSON"):
-        _ = s.accounts
-
-
-def test_accounts_rejects_empty_array(monkeypatch):
-    monkeypatch.setenv("EMAIL_CONCIERGE_ACCOUNTS", "[]")
-    s = Settings(_env_file=None)  # type: ignore[call-arg]
-    with pytest.raises(ValueError, match="non-empty JSON array"):
-        _ = s.accounts
-
-
-def test_accounts_rejects_duplicate_names(monkeypatch):
+def test_accounts_url_form_imap_scheme_is_plaintext(monkeypatch):
+    _clear_account_env(monkeypatch)
     monkeypatch.setenv(
-        "EMAIL_CONCIERGE_ACCOUNTS",
-        json.dumps([
-            {"name": "dup", "host": "h1", "username": "u1", "password": "p1"},
-            {"name": "dup", "host": "h2", "username": "u2", "password": "p2"},
-        ]),
+        "EMAIL_CONCIERGE_ACCOUNT_1",
+        "imap://u:p@mail.local/INBOX#local",
+    )
+    s = Settings(_env_file=None)  # type: ignore[call-arg]
+    accts = s.accounts
+    assert accts[0].use_ssl is False
+    assert accts[0].port == 143  # imap default
+
+
+def test_accounts_url_form_explicit_port_overrides_default(monkeypatch):
+    _clear_account_env(monkeypatch)
+    monkeypatch.setenv(
+        "EMAIL_CONCIERGE_ACCOUNT_1",
+        "imaps://u:p@host.example.com:9993/INBOX#custom",
+    )
+    s = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert s.accounts[0].port == 9993
+
+
+def test_accounts_url_form_empty_path_defaults_to_inbox(monkeypatch):
+    _clear_account_env(monkeypatch)
+    monkeypatch.setenv(
+        "EMAIL_CONCIERGE_ACCOUNT_1",
+        "imaps://u:p@host.example.com#shortname",
+    )
+    s = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert s.accounts[0].folder == "INBOX"
+
+
+def test_accounts_url_form_url_encoded_password(monkeypatch):
+    """Passwords with @, :, /, or # must be percent-encoded in the URL."""
+    _clear_account_env(monkeypatch)
+    # password is "p@ss:w/rd#1"
+    encoded = "p%40ss%3Aw%2Frd%231"
+    monkeypatch.setenv(
+        "EMAIL_CONCIERGE_ACCOUNT_1",
+        f"imaps://user:{encoded}@host.example.com/INBOX#acct",
+    )
+    s = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert s.accounts[0].password == "p@ss:w/rd#1"
+
+
+def test_accounts_url_form_nested_folder_preserved(monkeypatch):
+    _clear_account_env(monkeypatch)
+    monkeypatch.setenv(
+        "EMAIL_CONCIERGE_ACCOUNT_1",
+        "imaps://u:p@host.example.com/Work%2FProjects#work",
+    )
+    s = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert s.accounts[0].folder == "Work/Projects"
+
+
+def test_accounts_url_form_non_contiguous_indices(monkeypatch):
+    """Gaps in EMAIL_CONCIERGE_ACCOUNT_<N> numbering are fine and sort
+    numerically (ACCOUNT_2 before ACCOUNT_10)."""
+    _clear_account_env(monkeypatch)
+    monkeypatch.setenv(
+        "EMAIL_CONCIERGE_ACCOUNT_10",
+        "imaps://u:p@h10/INBOX#ten",
+    )
+    monkeypatch.setenv(
+        "EMAIL_CONCIERGE_ACCOUNT_2",
+        "imaps://u:p@h2/INBOX#two",
+    )
+    s = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert [a.name for a in s.accounts] == ["two", "ten"]
+
+
+def test_accounts_url_form_missing_fragment_rejected(monkeypatch):
+    _clear_account_env(monkeypatch)
+    monkeypatch.setenv(
+        "EMAIL_CONCIERGE_ACCOUNT_1",
+        "imaps://u:p@host.example.com/INBOX",
+    )
+    s = Settings(_env_file=None)  # type: ignore[call-arg]
+    with pytest.raises(ValueError, match="missing account name"):
+        _ = s.accounts
+
+
+def test_accounts_url_form_bad_scheme_rejected(monkeypatch):
+    _clear_account_env(monkeypatch)
+    monkeypatch.setenv(
+        "EMAIL_CONCIERGE_ACCOUNT_1",
+        "pop3://u:p@host.example.com/INBOX#oops",
+    )
+    s = Settings(_env_file=None)  # type: ignore[call-arg]
+    with pytest.raises(ValueError, match="scheme must be 'imaps' or 'imap'"):
+        _ = s.accounts
+
+
+def test_accounts_url_form_rejects_duplicate_names(monkeypatch):
+    _clear_account_env(monkeypatch)
+    monkeypatch.setenv(
+        "EMAIL_CONCIERGE_ACCOUNT_1",
+        "imaps://u:p@h1/INBOX#dup",
+    )
+    monkeypatch.setenv(
+        "EMAIL_CONCIERGE_ACCOUNT_2",
+        "imaps://u:p@h2/INBOX#dup",
     )
     s = Settings(_env_file=None)  # type: ignore[call-arg]
     with pytest.raises(ValueError, match="duplicate account name"):
         _ = s.accounts
+
+
+def test_accounts_url_form_error_message_names_env_var(monkeypatch):
+    """Errors should surface the exact EMAIL_CONCIERGE_ACCOUNT_<N> that
+    caused them so ops know which var to fix."""
+    _clear_account_env(monkeypatch)
+    monkeypatch.setenv("EMAIL_CONCIERGE_ACCOUNT_7", "imaps://u:p@h/INBOX")
+    s = Settings(_env_file=None)  # type: ignore[call-arg]
+    with pytest.raises(ValueError, match="EMAIL_CONCIERGE_ACCOUNT_7"):
+        _ = s.accounts
+
+
+def test_accounts_url_form_blank_value_ignored(monkeypatch):
+    """An empty EMAIL_CONCIERGE_ACCOUNT_<N> shouldn't be treated as a
+    configured account — fall back to the legacy single-account path."""
+    _clear_account_env(monkeypatch)
+    monkeypatch.setenv("EMAIL_CONCIERGE_ACCOUNT_1", "")
+    monkeypatch.setenv("EMAIL_CONCIERGE_IMAP_HOST", "mail.example.com")
+    monkeypatch.setenv("EMAIL_CONCIERGE_IMAP_USERNAME", "ben@example.com")
+    monkeypatch.setenv("EMAIL_CONCIERGE_IMAP_PASSWORD", "secret")
+    s = Settings(_env_file=None)  # type: ignore[call-arg]
+    accts = s.accounts
+    assert len(accts) == 1
+    assert accts[0].name == "ben@example.com"
 
 
 def test_account_requires_core_fields():

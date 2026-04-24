@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-import json
+import os
+import re
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
+from dotenv import dotenv_values
 from pydantic import AliasChoices, BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -52,14 +55,10 @@ class Settings(BaseSettings):
     imap_use_ssl: bool = True
     imap_reconnect_seconds: int = 30
 
-    # Multi-account: JSON array of {name, host, port, username, password,
-    # folder, use_ssl} objects. When set, this overrides the single-account
-    # imap_* fields and the listener spawns one thread per account.
-    # Shape documented on the Account model above.
-    accounts_json: str = Field(
-        default="",
-        validation_alias=AliasChoices("EMAIL_CONCIERGE_ACCOUNTS"),
-    )
+    # Multi-account: one URL per env var, EMAIL_CONCIERGE_ACCOUNT_1,
+    # EMAIL_CONCIERGE_ACCOUNT_2, ... (see `accounts` property for the URL
+    # grammar). When *any* ACCOUNT_<N> env var is set, the listener uses
+    # those and ignores the legacy single-account imap_* fields above.
 
     # Sender filtering
     sender_allow: str = ""
@@ -157,30 +156,38 @@ class Settings(BaseSettings):
         """Parsed list of accounts to watch.
 
         Precedence:
-        1. If `EMAIL_CONCIERGE_ACCOUNTS` is set, parse the JSON array.
+        1. If any `EMAIL_CONCIERGE_ACCOUNT_<N>` env var is set, parse each
+           as an IMAP connection URL and use those. Indices are sorted
+           numerically (ACCOUNT_1 before ACCOUNT_10) and need not be
+           contiguous — gaps are fine.
         2. Otherwise, synthesize a single-element list from the legacy
            `imap_*` fields so existing single-mailbox deployments keep
            working with zero config change. The synthesized account's
            name is the username (so DB tagging is stable across restarts).
+
+        URL grammar::
+
+            imaps://<user>:<password>@<host>[:<port>]/<folder>#<name>
+            imap://...                    (same, but plaintext)
+
+        Notes:
+            * `imaps` → use_ssl=True (default port 993); `imap` → SSL off
+              (default port 143).
+            * `<user>` and `<password>` must be URL-encoded if they
+              contain `@`, `:`, `/`, or `#` — standard percent-encoding.
+            * `<folder>` defaults to `INBOX` when the path is empty.
+            * `<name>` (URL fragment) is required and must be unique
+              across all configured accounts.
         """
-        raw = (self.accounts_json or "").strip()
-        if raw:
-            try:
-                items = json.loads(raw)
-            except json.JSONDecodeError as e:
-                raise ValueError(
-                    f"EMAIL_CONCIERGE_ACCOUNTS is not valid JSON: {e}"
-                ) from e
-            if not isinstance(items, list) or not items:
-                raise ValueError(
-                    "EMAIL_CONCIERGE_ACCOUNTS must be a non-empty JSON array"
-                )
-            parsed = [Account(**item) for item in items]
+        indexed = _read_indexed_env("EMAIL_CONCIERGE_ACCOUNT_")
+        if indexed:
+            parsed = [_parse_account_url(key, url) for key, url in indexed]
             seen: set[str] = set()
             for acct in parsed:
                 if acct.name in seen:
                     raise ValueError(
-                        f"EMAIL_CONCIERGE_ACCOUNTS: duplicate account name {acct.name!r}"
+                        f"duplicate account name {acct.name!r} across "
+                        f"EMAIL_CONCIERGE_ACCOUNT_* env vars"
                     )
                 seen.add(acct.name)
             return parsed
@@ -208,6 +215,81 @@ class Settings(BaseSettings):
     @property
     def disabled_plugins_list(self) -> list[str]:
         return _csv(self.disabled_plugins)
+
+
+_ACCOUNT_INDEX_RE = re.compile(r"^EMAIL_CONCIERGE_ACCOUNT_(\d+)$")
+
+
+def _read_indexed_env(prefix: str) -> list[tuple[str, str]]:
+    """Return (env_var_name, value) pairs for all ``<prefix><N>`` vars,
+    sorted by numeric index. Reads from ``os.environ`` with ``.env`` as
+    fallback (same precedence as pydantic-settings: real env wins).
+
+    Used for account URLs. Only keys matching ``<prefix>\\d+`` are
+    returned — typo'd keys like ``..._ACCOUNT_FOO`` are silently ignored
+    so they don't masquerade as an account.
+    """
+    dotenv_layer: dict[str, str | None] = (
+        dotenv_values(".env") if Path(".env").exists() else {}
+    )
+    merged: dict[str, str] = {
+        k: v for k, v in dotenv_layer.items() if v is not None
+    }
+    merged.update({k: v for k, v in os.environ.items() if v is not None})
+
+    matches: list[tuple[int, str, str]] = []
+    pattern = re.compile(r"^" + re.escape(prefix) + r"(\d+)$")
+    for key, value in merged.items():
+        if not value.strip():
+            continue
+        m = pattern.match(key)
+        if m is None:
+            continue
+        matches.append((int(m.group(1)), key, value))
+    matches.sort(key=lambda t: t[0])
+    return [(key, value) for _, key, value in matches]
+
+
+def _parse_account_url(env_var: str, url: str) -> Account:
+    """Parse one ``EMAIL_CONCIERGE_ACCOUNT_<N>`` URL into an Account.
+
+    See the `Settings.accounts` docstring for the grammar. Raises
+    ``ValueError`` with ``env_var`` in the message so misconfigured
+    users know exactly which variable to fix.
+    """
+    parts = urlsplit(url.strip())
+    scheme = parts.scheme.lower()
+    if scheme == "imaps":
+        use_ssl, default_port = True, 993
+    elif scheme == "imap":
+        use_ssl, default_port = False, 143
+    else:
+        raise ValueError(
+            f"{env_var}: scheme must be 'imaps' or 'imap', got {scheme!r}"
+        )
+
+    if not parts.hostname:
+        raise ValueError(f"{env_var}: missing host")
+    if not parts.username:
+        raise ValueError(f"{env_var}: missing username")
+    if parts.password is None:
+        raise ValueError(f"{env_var}: missing password")
+    if not parts.fragment:
+        raise ValueError(
+            f"{env_var}: missing account name — append '#<shortname>' to the URL"
+        )
+
+    folder = parts.path.lstrip("/") or "INBOX"
+
+    return Account(
+        name=unquote(parts.fragment),
+        host=parts.hostname,
+        port=parts.port or default_port,
+        username=unquote(parts.username),
+        password=unquote(parts.password),
+        folder=unquote(folder),
+        use_ssl=use_ssl,
+    )
 
 
 @lru_cache(maxsize=1)
