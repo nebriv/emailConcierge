@@ -80,6 +80,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Only sample rows previously handled by this extractor name",
     )
 
+    sub.add_parser(
+        "feedback",
+        help=(
+            "Scan CalDAV for Concierge-written events deleted within the "
+            "feedback window and flip the matching training rows to "
+            "label='neither' (active learning signal)."
+        ),
+    )
+
     sub.add_parser("metrics", help="(not implemented in this phase)")
     sub.add_parser("export-fixtures", help="(not implemented in this phase)")
 
@@ -160,6 +169,11 @@ def main(argv: list[str] | None = None) -> int:
             seed=args.seed,
             require_plugin=args.require_plugin,
         )
+
+    if args.command == "feedback":
+        from email_concierge.commands.feedback import feedback_command
+
+        return feedback_command()
 
     not_yet = {"metrics", "export-fixtures"}
     if args.command in not_yet:
